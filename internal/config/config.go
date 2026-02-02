@@ -49,10 +49,11 @@ type DockerConfig struct {
 
 // TraefikConfig holds Traefik configuration
 type TraefikConfig struct {
-	Enabled   bool
-	Network   string
-	Domain    string
-	EntryPort int
+	Enabled      bool
+	Network      string
+	Domain       string
+	EntryPoint   string
+	CertResolver string
 }
 
 // TemplatesConfig holds templates configuration
@@ -90,10 +91,11 @@ func Load() (*Config, error) {
 			PullPolicy: getEnv("DOCKER_PULL_POLICY", "if-not-present"),
 		},
 		Traefik: TraefikConfig{
-			Enabled:   getEnvAsBool("TRAEFIK_ENABLED", true),
-			Network:   getEnv("TRAEFIK_NETWORK", "traefik"),
-			Domain:    getEnv("TRAEFIK_DOMAIN", "sandbox.local"),
-			EntryPort: getEnvAsInt("TRAEFIK_ENTRY_PORT", 80),
+			Enabled:      getEnvAsBool("TRAEFIK_ENABLED", true),
+			Network:      getEnv("TRAEFIK_NETWORK", "sandbox-network"),
+			Domain:       getEnv("SANDBOX_DOMAIN", "localhost"),
+			EntryPoint:   getEnv("TRAEFIK_ENTRYPOINT", "websecure"),
+			CertResolver: getEnv("TRAEFIK_CERT_RESOLVER", "letsencrypt"),
 		},
 		Templates: TemplatesConfig{
 			Dir: getEnv("TEMPLATES_DIR", "./templates"),

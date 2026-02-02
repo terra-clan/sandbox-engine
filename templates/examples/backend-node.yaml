@@ -1,18 +1,16 @@
-# Python Backend Development Sandbox Template
+# Node.js Backend Development Sandbox Template
 # Used for hiring assessments and training tasks
 # Uses code-server (VS Code in browser)
 
-name: backend-python
-description: "Python backend development environment with FastAPI, PostgreSQL, and Redis"
+name: backend-node
+description: "Node.js backend development environment with Express/NestJS"
 
-base_image: ghcr.io/terra-clan/sandbox-engine/code-server-python:latest
+base_image: ghcr.io/terra-clan/sandbox-engine/code-server-node:latest
 
-# Shared services to provision for this sandbox
 services:
   - postgres
   - redis
 
-# Resource limits
 resources:
   cpu_limit: "2"
   memory_limit: "4Gi"
@@ -20,35 +18,27 @@ resources:
   memory_request: "512Mi"
   disk_limit: "10Gi"
 
-# Environment variables injected into container
-# Service credentials (POSTGRES_*, REDIS_*) are auto-injected
 env:
-  PYTHONDONTWRITEBYTECODE: "1"
-  PYTHONUNBUFFERED: "1"
-  PIP_NO_CACHE_DIR: "1"
-  ENVIRONMENT: "sandbox"
+  NODE_ENV: development
 
-# Time to live for this sandbox (default)
 ttl: 4h
 
-# Exposed ports
 expose:
   - container: 8080
     protocol: tcp
     name: code
     public: true
 
-  - container: 8000
+  - container: 3000
     protocol: tcp
-    name: api
+    name: app
     public: true
 
-  - container: 5555
+  - container: 9229
     protocol: tcp
     name: debug
     public: false
 
-# Volume mounts
 volumes:
   - name: workspace
     mount_path: /home/coder/workspace
@@ -60,7 +50,6 @@ volumes:
     read_only: false
     size: "1Gi"
 
-# Lifecycle commands
 commands:
   init: []
 
@@ -70,10 +59,9 @@ commands:
 
   healthcheck: "curl -f http://localhost:8080/healthz || exit 1"
 
-# Labels for filtering and identification
 labels:
   category: backend
-  language: python
-  framework: fastapi
+  language: node
+  framework: express
   difficulty: intermediate
   use_case: hiring

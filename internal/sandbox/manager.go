@@ -56,6 +56,7 @@ type CreateOptions struct {
 type DockerManager struct {
 	docker          *client.Client
 	config          config.DockerConfig
+	traefikConfig   config.TraefikConfig
 	serviceRegistry *services.Registry
 	templateLoader  *templates.Loader
 	repo            storage.Repository
@@ -64,6 +65,7 @@ type DockerManager struct {
 // NewManager creates a new DockerManager
 func NewManager(
 	cfg config.DockerConfig,
+	traefikCfg config.TraefikConfig,
 	registry *services.Registry,
 	loader *templates.Loader,
 	repo storage.Repository,
@@ -79,6 +81,7 @@ func NewManager(
 	return &DockerManager{
 		docker:          cli,
 		config:          cfg,
+		traefikConfig:   traefikCfg,
 		serviceRegistry: registry,
 		templateLoader:  loader,
 		repo:            repo,
@@ -201,6 +204,9 @@ func (m *DockerManager) provisionSandbox(ctx context.Context, sb *models.Sandbox
 
 	sb.ContainerID = containerID
 
+	// Build endpoints for Traefik routing
+	sb.Endpoints = m.buildEndpoints(sb, tmpl)
+
 	// Start container
 	if err := m.docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("failed to start container: %v", err))
@@ -217,7 +223,7 @@ func (m *DockerManager) provisionSandbox(ctx context.Context, sb *models.Sandbox
 		slog.Error("failed to update sandbox in database", "error", err, "id", sb.ID)
 	}
 
-	slog.Info("sandbox started", "id", sb.ID, "container", containerID)
+	slog.Info("sandbox started", "id", sb.ID, "container", containerID, "endpoints", sb.Endpoints)
 }
 
 // pullImage pulls a Docker image if not present
@@ -289,6 +295,69 @@ func (m *DockerManager) buildEnv(sb *models.Sandbox, tmpl *models.Template, extr
 	return env
 }
 
+// buildTraefikLabels generates Traefik labels for automatic routing
+func (m *DockerManager) buildTraefikLabels(sb *models.Sandbox, tmpl *models.Template) map[string]string {
+	if !m.traefikConfig.Enabled {
+		return nil
+	}
+
+	sandboxHost := fmt.Sprintf("%s.%s", sb.ID, m.traefikConfig.Domain)
+	routerName := fmt.Sprintf("sandbox-%s", sb.ID)
+
+	labels := map[string]string{
+		"traefik.enable":         "true",
+		"traefik.docker.network": m.traefikConfig.Network,
+
+		// HTTP router
+		fmt.Sprintf("traefik.http.routers.%s.rule", routerName):             fmt.Sprintf("Host(`%s`)", sandboxHost),
+		fmt.Sprintf("traefik.http.routers.%s.entrypoints", routerName):      m.traefikConfig.EntryPoint,
+		fmt.Sprintf("traefik.http.routers.%s.tls", routerName):              "true",
+		fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", routerName): m.traefikConfig.CertResolver,
+
+		// Service (default port 8080)
+		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", routerName): "8080",
+	}
+
+	// Add labels for each exposed port from template
+	for _, port := range tmpl.Expose {
+		if port.Public {
+			portRouterName := fmt.Sprintf("sandbox-%s-%s", sb.ID, port.Name)
+			portHost := fmt.Sprintf("%s-%s.%s", sb.ID, port.Name, m.traefikConfig.Domain)
+
+			labels[fmt.Sprintf("traefik.http.routers.%s.rule", portRouterName)] = fmt.Sprintf("Host(`%s`)", portHost)
+			labels[fmt.Sprintf("traefik.http.routers.%s.entrypoints", portRouterName)] = m.traefikConfig.EntryPoint
+			labels[fmt.Sprintf("traefik.http.routers.%s.tls", portRouterName)] = "true"
+			labels[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", portRouterName)] = m.traefikConfig.CertResolver
+			labels[fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", portRouterName)] = fmt.Sprintf("%d", port.Container)
+		}
+	}
+
+	return labels
+}
+
+// buildEndpoints generates endpoint URLs for the sandbox
+func (m *DockerManager) buildEndpoints(sb *models.Sandbox, tmpl *models.Template) map[string]string {
+	if !m.traefikConfig.Enabled {
+		return make(map[string]string)
+	}
+
+	scheme := "https"
+	if m.traefikConfig.EntryPoint == "web" {
+		scheme = "http"
+	}
+
+	endpoints := make(map[string]string)
+	endpoints["main"] = fmt.Sprintf("%s://%s.%s", scheme, sb.ID, m.traefikConfig.Domain)
+
+	for _, port := range tmpl.Expose {
+		if port.Public {
+			endpoints[port.Name] = fmt.Sprintf("%s://%s-%s.%s", scheme, sb.ID, port.Name, m.traefikConfig.Domain)
+		}
+	}
+
+	return endpoints
+}
+
 // createContainer creates a Docker container for the sandbox
 func (m *DockerManager) createContainer(ctx context.Context, sb *models.Sandbox, tmpl *models.Template, env []string) (string, error) {
 	containerName := fmt.Sprintf("sandbox-%s", sb.ID)
@@ -308,14 +377,20 @@ func (m *DockerManager) createContainer(ctx context.Context, sb *models.Sandbox,
 		resources.Memory = 512 * 1024 * 1024 // 512MB default
 	}
 
-	// Labels for Traefik and metadata
+	// Labels for metadata
 	labels := map[string]string{
 		"sandbox.id":       sb.ID,
 		"sandbox.user":     sb.UserID,
 		"sandbox.template": sb.TemplateID,
 		"sandbox.managed":  "true",
 	}
+	// Add template labels
 	for k, v := range tmpl.Labels {
+		labels[k] = v
+	}
+	// Add Traefik labels for automatic routing
+	traefikLabels := m.buildTraefikLabels(sb, tmpl)
+	for k, v := range traefikLabels {
 		labels[k] = v
 	}
 

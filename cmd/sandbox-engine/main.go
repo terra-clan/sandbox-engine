@@ -86,7 +86,7 @@ func main() {
 	}
 
 	// Initialize sandbox manager
-	manager, err := sandbox.NewManager(cfg.Docker, registry, templateLoader, repo)
+	manager, err := sandbox.NewManager(cfg.Docker, cfg.Traefik, registry, templateLoader, repo)
 	if err != nil {
 		slog.Error("failed to create sandbox manager", "error", err)
 		os.Exit(1)
