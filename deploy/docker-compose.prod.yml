@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # PostgreSQL для sandbox-engine
+  postgres:
+    image: postgres:16-alpine
+    container_name: sandbox-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sandbox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-sandbox_engine}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sandbox-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sandbox -d sandbox_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: sandbox-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - sandbox-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Traefik reverse proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: sandbox-traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=sandbox-network"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks:
+      - sandbox-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.terra-sandbox.ru`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-dashboard.middlewares=traefik-auth"
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
+
+  # Sandbox Engine API
+  sandbox-engine:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: sandbox-engine:latest
+    container_name: sandbox-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - DATABASE_DSN=postgres://${POSTGRES_USER:-sandbox}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sandbox_engine}?sslmode=disable
+      - REDIS_ADDRESS=redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_NETWORK=sandbox-network
+      - TRAEFIK_ENABLED=true
+      - SANDBOX_DOMAIN=terra-sandbox.ru
+      - TRAEFIK_NETWORK=sandbox-network
+      - TRAEFIK_ENTRYPOINT=websecure
+      - TRAEFIK_CERT_RESOLVER=letsencrypt
+      - TEMPLATES_DIR=/app/templates
+      - MIGRATIONS_DIR=/app/migrations
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../templates:/app/templates:ro
+      - ../migrations:/app/migrations:ro
+    networks:
+      - sandbox-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sandbox-api.rule=Host(`api.terra-sandbox.ru`)"
+      - "traefik.http.routers.sandbox-api.entrypoints=websecure"
+      - "traefik.http.routers.sandbox-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.sandbox-api.loadbalancer.server.port=8080"
+
+networks:
+  sandbox-network:
+    name: sandbox-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  traefik_letsencrypt:
