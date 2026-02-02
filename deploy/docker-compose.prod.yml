@@ -48,8 +48,9 @@ services:
       - "--providers.docker.network=sandbox-network"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      # Временно отключено пока DNS не пропагируется
+      # - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      # - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
       - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
       - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
@@ -111,8 +112,10 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sandbox-api.rule=Host(`api.terra-sandbox.ru`)"
-      - "traefik.http.routers.sandbox-api.entrypoints=websecure"
-      - "traefik.http.routers.sandbox-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.sandbox-api.entrypoints=web"
+      # Временно отключено пока DNS не пропагируется
+      # - "traefik.http.routers.sandbox-api.entrypoints=websecure"
+      # - "traefik.http.routers.sandbox-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.sandbox-api.loadbalancer.server.port=8080"
 
 networks:
