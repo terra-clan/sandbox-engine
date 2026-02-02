@@ -103,7 +103,7 @@ func main() {
 	cleaner.Start(ctx)
 
 	// Setup HTTP server
-	server := api.NewServer(cfg.Server, manager, templateLoader)
+	server := api.NewServer(cfg.Server, manager, templateLoader, repo)
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      server.Router(),

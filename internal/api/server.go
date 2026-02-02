@@ -11,6 +11,7 @@ import (
 
 	"github.com/terra-clan/sandbox-engine/internal/config"
 	"github.com/terra-clan/sandbox-engine/internal/sandbox"
+	"github.com/terra-clan/sandbox-engine/internal/storage"
 	"github.com/terra-clan/sandbox-engine/internal/templates"
 )
 
@@ -20,6 +21,7 @@ type Server struct {
 	router         *chi.Mux
 	sandboxManager sandbox.Manager
 	templateLoader *templates.Loader
+	authMiddleware *AuthMiddleware
 }
 
 // NewServer creates a new API server
@@ -27,11 +29,13 @@ func NewServer(
 	cfg config.ServerConfig,
 	manager sandbox.Manager,
 	loader *templates.Loader,
+	repo storage.Repository,
 ) *Server {
 	s := &Server{
 		config:         cfg,
 		sandboxManager: manager,
 		templateLoader: loader,
+		authMiddleware: NewAuthMiddleware(repo),
 	}
 	s.setupRouter()
 	return s
@@ -63,30 +67,33 @@ func (s *Server) setupRouter() {
 		MaxAge:           300,
 	}))
 
-	// Health check (outside versioned API)
+	// Health check (outside versioned API - public)
 	r.Get("/health", s.handleHealth)
 	r.Get("/ready", s.handleReady)
 
-	// API v1 routes
+	// API v1 routes (protected by authentication)
 	r.Route("/api/v1", func(r chi.Router) {
+		// Apply authentication middleware to all /api/v1/* routes
+		r.Use(s.authMiddleware.Authenticate)
+
 		// Sandboxes
 		r.Route("/sandboxes", func(r chi.Router) {
-			r.Get("/", s.handleListSandboxes)
-			r.Post("/", s.handleCreateSandbox)
+			r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleListSandboxes)
+			r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/", s.handleCreateSandbox)
 
 			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/", s.handleGetSandbox)
-				r.Delete("/", s.handleDeleteSandbox)
-				r.Post("/extend", s.handleExtendTTL)
-				r.Post("/stop", s.handleStopSandbox)
-				r.Get("/logs", s.handleGetLogs)
+				r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleGetSandbox)
+				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Delete("/", s.handleDeleteSandbox)
+				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/extend", s.handleExtendTTL)
+				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/stop", s.handleStopSandbox)
+				r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/logs", s.handleGetLogs)
 			})
 		})
 
 		// Templates
 		r.Route("/templates", func(r chi.Router) {
-			r.Get("/", s.handleListTemplates)
-			r.Get("/{name}", s.handleGetTemplate)
+			r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)
+			r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/{name}", s.handleGetTemplate)
 		})
 	})
 

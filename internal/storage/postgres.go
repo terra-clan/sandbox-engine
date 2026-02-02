@@ -540,6 +540,69 @@ func (r *PostgresRepository) DeleteServices(ctx context.Context, sandboxID strin
 	return nil
 }
 
+// GetClientByApiKey retrieves an API client by its key
+func (r *PostgresRepository) GetClientByApiKey(ctx context.Context, apiKey string) (*models.ApiClient, error) {
+	query := `
+		SELECT id, name, api_key, is_active, created_at, last_used_at, permissions, metadata
+		FROM api_clients
+		WHERE api_key = $1
+	`
+
+	var client models.ApiClient
+	var lastUsedAt sql.NullTime
+	var permissionsJSON, metadataJSON []byte
+
+	err := r.pool.QueryRow(ctx, query, apiKey).Scan(
+		&client.ID,
+		&client.Name,
+		&client.ApiKey,
+		&client.IsActive,
+		&client.CreatedAt,
+		&lastUsedAt,
+		&permissionsJSON,
+		&metadataJSON,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil // Not found
+		}
+		return nil, fmt.Errorf("failed to get api client: %w", err)
+	}
+
+	if lastUsedAt.Valid {
+		client.LastUsedAt = &lastUsedAt.Time
+	}
+
+	// Parse permissions JSON array
+	if permissionsJSON != nil {
+		if err := json.Unmarshal(permissionsJSON, &client.Permissions); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal permissions: %w", err)
+		}
+	}
+
+	// Parse metadata JSON object
+	if metadataJSON != nil {
+		if err := json.Unmarshal(metadataJSON, &client.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+
+	return &client, nil
+}
+
+// UpdateClientLastUsed updates the last_used_at timestamp for a client
+func (r *PostgresRepository) UpdateClientLastUsed(ctx context.Context, apiKey string) error {
+	query := `UPDATE api_clients SET last_used_at = NOW() WHERE api_key = $1`
+
+	_, err := r.pool.Exec(ctx, query, apiKey)
+	if err != nil {
+		return fmt.Errorf("failed to update client last_used_at: %w", err)
+	}
+
+	return nil
+}
+
 // Helper functions for nullable values
 
 func nullString(s string) sql.NullString {

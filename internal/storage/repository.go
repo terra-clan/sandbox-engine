@@ -22,6 +22,10 @@ type Repository interface {
 	UpdateService(ctx context.Context, sandboxID string, svc *models.ServiceInstance) error
 	DeleteServices(ctx context.Context, sandboxID string) error
 
+	// API Clients
+	GetClientByApiKey(ctx context.Context, apiKey string) (*models.ApiClient, error)
+	UpdateClientLastUsed(ctx context.Context, apiKey string) error
+
 	// Health
 	Ping(ctx context.Context) error
 	Close() error
