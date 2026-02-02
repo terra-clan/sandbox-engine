@@ -15,6 +15,7 @@ import (
 	"github.com/terra-clan/sandbox-engine/internal/config"
 	"github.com/terra-clan/sandbox-engine/internal/sandbox"
 	"github.com/terra-clan/sandbox-engine/internal/services"
+	"github.com/terra-clan/sandbox-engine/internal/storage"
 	"github.com/terra-clan/sandbox-engine/internal/templates"
 )
 
@@ -36,6 +37,29 @@ func main() {
 		"host", cfg.Server.Host,
 		"port", cfg.Server.Port,
 	)
+
+	// Create context for initialization
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	// Run database migrations
+	slog.Info("running database migrations", "dir", cfg.Database.MigrationsDir)
+	if err := storage.MigrateFromDSN(initCtx, cfg.Database.DSN, cfg.Database.MigrationsDir); err != nil {
+		slog.Error("failed to run migrations", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize database repository
+	repo, err := storage.NewPostgresRepository(initCtx, storage.PostgresConfig{
+		DSN:          cfg.Database.DSN,
+		MaxOpenConns: int32(cfg.Database.MaxOpenConns),
+		MaxIdleConns: int32(cfg.Database.MaxIdleConns),
+	})
+	if err != nil {
+		slog.Error("failed to create database repository", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("database connected successfully")
 
 	// Initialize service registry
 	registry := services.NewRegistry()
@@ -62,7 +86,7 @@ func main() {
 	}
 
 	// Initialize sandbox manager
-	manager, err := sandbox.NewManager(cfg.Docker, registry, templateLoader)
+	manager, err := sandbox.NewManager(cfg.Docker, registry, templateLoader, repo)
 	if err != nil {
 		slog.Error("failed to create sandbox manager", "error", err)
 		os.Exit(1)

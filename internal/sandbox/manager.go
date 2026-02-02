@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -20,6 +19,7 @@ import (
 	"github.com/terra-clan/sandbox-engine/internal/config"
 	"github.com/terra-clan/sandbox-engine/internal/models"
 	"github.com/terra-clan/sandbox-engine/internal/services"
+	"github.com/terra-clan/sandbox-engine/internal/storage"
 	"github.com/terra-clan/sandbox-engine/internal/templates"
 )
 
@@ -54,13 +54,11 @@ type CreateOptions struct {
 
 // DockerManager implements Manager using Docker
 type DockerManager struct {
-	docker         *client.Client
-	config         config.DockerConfig
+	docker          *client.Client
+	config          config.DockerConfig
 	serviceRegistry *services.Registry
-	templateLoader *templates.Loader
-
-	mu        sync.RWMutex
-	sandboxes map[string]*models.Sandbox
+	templateLoader  *templates.Loader
+	repo            storage.Repository
 }
 
 // NewManager creates a new DockerManager
@@ -68,6 +66,7 @@ func NewManager(
 	cfg config.DockerConfig,
 	registry *services.Registry,
 	loader *templates.Loader,
+	repo storage.Repository,
 ) (*DockerManager, error) {
 	cli, err := client.NewClientWithOpts(
 		client.WithHost(cfg.Host),
@@ -82,14 +81,23 @@ func NewManager(
 		config:          cfg,
 		serviceRegistry: registry,
 		templateLoader:  loader,
-		sandboxes:       make(map[string]*models.Sandbox),
+		repo:            repo,
 	}, nil
 }
 
 // Ping checks if the manager is operational
 func (m *DockerManager) Ping(ctx context.Context) error {
-	_, err := m.docker.Ping(ctx)
-	return err
+	// Check Docker connectivity
+	if _, err := m.docker.Ping(ctx); err != nil {
+		return fmt.Errorf("docker ping failed: %w", err)
+	}
+
+	// Check database connectivity
+	if err := m.repo.Ping(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	return nil
 }
 
 // Create creates a new sandbox from a template
@@ -125,10 +133,10 @@ func (m *DockerManager) Create(ctx context.Context, templateID, userID string, o
 		Metadata:   opts.Metadata,
 	}
 
-	// Store sandbox
-	m.mu.Lock()
-	m.sandboxes[id] = sb
-	m.mu.Unlock()
+	// Store sandbox in database
+	if err := m.repo.CreateSandbox(ctx, sb); err != nil {
+		return nil, fmt.Errorf("failed to create sandbox: %w", err)
+	}
 
 	// Provision services asynchronously
 	go m.provisionSandbox(context.Background(), sb, tmpl, opts.Env)
@@ -149,30 +157,35 @@ func (m *DockerManager) provisionSandbox(ctx context.Context, sb *models.Sandbox
 	for _, serviceName := range tmpl.Services {
 		provider := m.serviceRegistry.Get(serviceName)
 		if provider == nil {
-			m.updateStatus(sb.ID, models.StatusFailed, fmt.Sprintf("unknown service: %s", serviceName))
+			m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("unknown service: %s", serviceName))
 			return
 		}
 
 		creds, err := provider.Provision(ctx, sb.ID, serviceName)
 		if err != nil {
-			m.updateStatus(sb.ID, models.StatusFailed, fmt.Sprintf("failed to provision %s: %v", serviceName, err))
+			m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("failed to provision %s: %v", serviceName, err))
 			return
 		}
 
-		m.mu.Lock()
-		sb.Services[serviceName] = &models.ServiceInstance{
+		svcInstance := &models.ServiceInstance{
 			Name:        serviceName,
 			Type:        serviceName,
 			Status:      "ready",
 			Credentials: creds,
 			CreatedAt:   time.Now(),
 		}
-		m.mu.Unlock()
+
+		// Store service in database
+		if err := m.repo.CreateService(ctx, sb.ID, svcInstance); err != nil {
+			slog.Error("failed to save service to database", "error", err, "sandbox", sb.ID, "service", serviceName)
+		}
+
+		sb.Services[serviceName] = svcInstance
 	}
 
 	// Pull image if needed
 	if err := m.pullImage(ctx, tmpl.BaseImage); err != nil {
-		m.updateStatus(sb.ID, models.StatusFailed, fmt.Sprintf("failed to pull image: %v", err))
+		m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("failed to pull image: %v", err))
 		return
 	}
 
@@ -182,26 +195,27 @@ func (m *DockerManager) provisionSandbox(ctx context.Context, sb *models.Sandbox
 	// Create container
 	containerID, err := m.createContainer(ctx, sb, tmpl, env)
 	if err != nil {
-		m.updateStatus(sb.ID, models.StatusFailed, fmt.Sprintf("failed to create container: %v", err))
+		m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("failed to create container: %v", err))
 		return
 	}
 
-	m.mu.Lock()
 	sb.ContainerID = containerID
-	m.mu.Unlock()
 
 	// Start container
 	if err := m.docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		m.updateStatus(sb.ID, models.StatusFailed, fmt.Sprintf("failed to start container: %v", err))
+		m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("failed to start container: %v", err))
 		return
 	}
 
 	now := time.Now()
-	m.mu.Lock()
 	sb.StartedAt = &now
 	sb.Status = models.StatusRunning
 	sb.StatusMsg = ""
-	m.mu.Unlock()
+
+	// Update sandbox in database
+	if err := m.repo.UpdateSandbox(ctx, sb); err != nil {
+		slog.Error("failed to update sandbox in database", "error", err, "id", sb.ID)
+	}
 
 	slog.Info("sandbox started", "id", sb.ID, "container", containerID)
 }
@@ -331,24 +345,30 @@ func (m *DockerManager) createContainer(ctx context.Context, sb *models.Sandbox,
 	return resp.ID, nil
 }
 
-// updateStatus updates sandbox status thread-safely
-func (m *DockerManager) updateStatus(id string, status models.SandboxStatus, msg string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// updateStatus updates sandbox status in database
+func (m *DockerManager) updateStatus(ctx context.Context, id string, status models.SandboxStatus, msg string) {
+	sb, err := m.repo.GetSandbox(ctx, id)
+	if err != nil || sb == nil {
+		slog.Error("failed to get sandbox for status update", "error", err, "id", id)
+		return
+	}
 
-	if sb, ok := m.sandboxes[id]; ok {
-		sb.Status = status
-		sb.StatusMsg = msg
+	sb.Status = status
+	sb.StatusMsg = msg
+
+	if err := m.repo.UpdateSandbox(ctx, sb); err != nil {
+		slog.Error("failed to update sandbox status", "error", err, "id", id, "status", status)
 	}
 }
 
 // Get retrieves a sandbox by ID
 func (m *DockerManager) Get(ctx context.Context, id string) (*models.Sandbox, error) {
-	m.mu.RLock()
-	sb, ok := m.sandboxes[id]
-	m.mu.RUnlock()
+	sb, err := m.repo.GetSandbox(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox: %w", err)
+	}
 
-	if !ok {
+	if sb == nil {
 		return nil, ErrSandboxNotFound
 	}
 
@@ -357,11 +377,12 @@ func (m *DockerManager) Get(ctx context.Context, id string) (*models.Sandbox, er
 
 // Stop stops a running sandbox
 func (m *DockerManager) Stop(ctx context.Context, id string) error {
-	m.mu.Lock()
-	sb, ok := m.sandboxes[id]
-	m.mu.Unlock()
+	sb, err := m.repo.GetSandbox(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get sandbox: %w", err)
+	}
 
-	if !ok {
+	if sb == nil {
 		return ErrSandboxNotFound
 	}
 
@@ -376,9 +397,10 @@ func (m *DockerManager) Stop(ctx context.Context, id string) error {
 		}
 	}
 
-	m.mu.Lock()
 	sb.Status = models.StatusStopped
-	m.mu.Unlock()
+	if err := m.repo.UpdateSandbox(ctx, sb); err != nil {
+		return fmt.Errorf("failed to update sandbox status: %w", err)
+	}
 
 	slog.Info("sandbox stopped", "id", id)
 	return nil
@@ -386,11 +408,12 @@ func (m *DockerManager) Stop(ctx context.Context, id string) error {
 
 // Delete removes a sandbox and all its resources
 func (m *DockerManager) Delete(ctx context.Context, id string) error {
-	m.mu.Lock()
-	sb, ok := m.sandboxes[id]
-	m.mu.Unlock()
+	sb, err := m.repo.GetSandbox(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get sandbox: %w", err)
+	}
 
-	if !ok {
+	if sb == nil {
 		return ErrSandboxNotFound
 	}
 
@@ -411,10 +434,10 @@ func (m *DockerManager) Delete(ctx context.Context, id string) error {
 		}
 	}
 
-	// Remove from map
-	m.mu.Lock()
-	delete(m.sandboxes, id)
-	m.mu.Unlock()
+	// Delete from database (services will be cascade deleted)
+	if err := m.repo.DeleteSandbox(ctx, id); err != nil {
+		return fmt.Errorf("failed to delete sandbox from database: %w", err)
+	}
 
 	slog.Info("sandbox deleted", "id", id)
 	return nil
@@ -422,44 +445,22 @@ func (m *DockerManager) Delete(ctx context.Context, id string) error {
 
 // List returns sandboxes matching filters
 func (m *DockerManager) List(ctx context.Context, filters models.ListFilters) ([]*models.Sandbox, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]*models.Sandbox, 0)
-
-	for _, sb := range m.sandboxes {
-		// Apply filters
-		if filters.UserID != "" && sb.UserID != filters.UserID {
-			continue
-		}
-		if filters.TemplateID != "" && sb.TemplateID != filters.TemplateID {
-			continue
-		}
-		if filters.Status != "" && sb.Status != filters.Status {
-			continue
-		}
-
-		result = append(result, sb)
+	sandboxes, err := m.repo.ListSandboxes(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sandboxes: %w", err)
 	}
 
-	// Apply pagination
-	if filters.Offset > 0 && filters.Offset < len(result) {
-		result = result[filters.Offset:]
-	}
-	if filters.Limit > 0 && filters.Limit < len(result) {
-		result = result[:filters.Limit]
-	}
-
-	return result, nil
+	return sandboxes, nil
 }
 
 // ExtendTTL extends the sandbox expiration time
 func (m *DockerManager) ExtendTTL(ctx context.Context, id string, duration time.Duration) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	sb, err := m.repo.GetSandbox(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get sandbox: %w", err)
+	}
 
-	sb, ok := m.sandboxes[id]
-	if !ok {
+	if sb == nil {
 		return ErrSandboxNotFound
 	}
 
@@ -468,6 +469,11 @@ func (m *DockerManager) ExtendTTL(ctx context.Context, id string, duration time.
 	}
 
 	sb.ExpiresAt = sb.ExpiresAt.Add(duration)
+
+	if err := m.repo.UpdateSandbox(ctx, sb); err != nil {
+		return fmt.Errorf("failed to update sandbox TTL: %w", err)
+	}
+
 	slog.Info("sandbox TTL extended", "id", id, "new_expires_at", sb.ExpiresAt)
 
 	return nil
@@ -475,11 +481,12 @@ func (m *DockerManager) ExtendTTL(ctx context.Context, id string, duration time.
 
 // GetLogs retrieves container logs
 func (m *DockerManager) GetLogs(ctx context.Context, id string, tail int) (string, error) {
-	m.mu.RLock()
-	sb, ok := m.sandboxes[id]
-	m.mu.RUnlock()
+	sb, err := m.repo.GetSandbox(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("failed to get sandbox: %w", err)
+	}
 
-	if !ok {
+	if sb == nil {
 		return "", ErrSandboxNotFound
 	}
 
@@ -509,22 +516,20 @@ func (m *DockerManager) GetLogs(ctx context.Context, id string, tail int) (strin
 
 // GetExpired returns all expired sandboxes
 func (m *DockerManager) GetExpired(ctx context.Context) ([]*models.Sandbox, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]*models.Sandbox, 0)
-	now := time.Now()
-
-	for _, sb := range m.sandboxes {
-		if !sb.Status.IsTerminal() && now.After(sb.ExpiresAt) {
-			result = append(result, sb)
-		}
+	sandboxes, err := m.repo.GetExpiredSandboxes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get expired sandboxes: %w", err)
 	}
 
-	return result, nil
+	return sandboxes, nil
 }
 
 // Close cleans up manager resources
 func (m *DockerManager) Close() error {
+	// Close database connection
+	if err := m.repo.Close(); err != nil {
+		slog.Warn("failed to close repository", "error", err)
+	}
+
 	return m.docker.Close()
 }

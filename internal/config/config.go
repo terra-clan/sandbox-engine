@@ -26,7 +26,10 @@ type ServerConfig struct {
 
 // DatabaseConfig holds PostgreSQL configuration
 type DatabaseConfig struct {
-	DSN string
+	DSN           string
+	MaxOpenConns  int
+	MaxIdleConns  int
+	MigrationsDir string
 }
 
 // RedisConfig holds Redis configuration
@@ -70,7 +73,10 @@ func Load() (*Config, error) {
 			Port: getEnvAsInt("SERVER_PORT", 8080),
 		},
 		Database: DatabaseConfig{
-			DSN: getEnv("DATABASE_DSN", "postgres://sandbox:sandbox@localhost:5432/sandbox_engine?sslmode=disable"),
+			DSN:           getEnv("DATABASE_DSN", "postgres://sandbox:sandbox@localhost:5432/sandbox_engine?sslmode=disable"),
+			MaxOpenConns:  getEnvAsInt("DATABASE_MAX_OPEN_CONNS", 25),
+			MaxIdleConns:  getEnvAsInt("DATABASE_MAX_IDLE_CONNS", 5),
+			MigrationsDir: getEnv("MIGRATIONS_DIR", "./migrations"),
 		},
 		Redis: RedisConfig{
 			Address:  getEnv("REDIS_ADDRESS", "localhost:6379"),
