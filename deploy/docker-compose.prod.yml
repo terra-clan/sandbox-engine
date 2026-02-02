@@ -56,8 +56,8 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--log.level=INFO"
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:8880:80"
+      - "127.0.0.1:8443:443"
     environment:
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
     volumes:
