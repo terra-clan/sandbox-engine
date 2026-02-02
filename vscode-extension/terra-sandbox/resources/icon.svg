@@ -1,0 +1,10 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Песочные часы / Hourglass icon -->
+  <path d="M6 2H18V6C18 8.21 16.21 10 14 10H10C7.79 10 6 8.21 6 6V2Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <path d="M6 22H18V18C18 15.79 16.21 14 14 14H10C7.79 14 6 15.79 6 18V22Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <path d="M10 10H14V14H10V10Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <line x1="4" y1="2" x2="20" y2="2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <line x1="4" y1="22" x2="20" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <!-- Песок внизу -->
+  <path d="M8 18C8 16.9 8.9 16 10 16H14C15.1 16 16 16.9 16 18V20H8V18Z" fill="currentColor" opacity="0.5"/>
+</svg>
