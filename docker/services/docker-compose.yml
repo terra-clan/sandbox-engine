@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - shared database for sandboxes
+  postgres:
+    image: postgres:16-alpine
+    container_name: sandbox-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sandbox
+      POSTGRES_PASSWORD: sandbox_secret
+      POSTGRES_DB: sandbox_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - sandbox-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sandbox -d sandbox_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - for key prefix isolation
+  redis:
+    image: redis:7-alpine
+    container_name: sandbox-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_secret
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - sandbox-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Traefik - reverse proxy for sandbox endpoints
+  traefik:
+    image: traefik:v3.0
+    container_name: sandbox-traefik
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=sandbox-network"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - sandbox-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.sandbox.local`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+networks:
+  sandbox-network:
+    name: sandbox-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

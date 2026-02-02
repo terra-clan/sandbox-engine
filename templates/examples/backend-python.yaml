@@ -1,0 +1,78 @@
+# Python Backend Development Sandbox Template
+# Used for hiring assessments and training tasks
+
+name: backend-python
+description: "Python backend development environment with FastAPI, PostgreSQL, and Redis"
+
+base_image: python:3.12-slim
+
+# Shared services to provision for this sandbox
+services:
+  - postgres
+  - redis
+
+# Resource limits
+resources:
+  cpu_limit: "2"
+  memory_limit: "1g"
+  cpu_request: "0.5"
+  memory_request: "256m"
+  disk_limit: "5g"
+
+# Environment variables injected into container
+# Service credentials (POSTGRES_*, REDIS_*) are auto-injected
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  PIP_NO_CACHE_DIR: "1"
+  ENVIRONMENT: "sandbox"
+
+# Time to live for this sandbox (default)
+ttl: 2h
+
+# Exposed ports
+expose:
+  - container: 8000
+    protocol: tcp
+    name: api
+    public: true
+    traefik_rule: "PathPrefix(`/`)"
+
+  - container: 5555
+    protocol: tcp
+    name: debug
+    public: false
+
+# Volume mounts
+volumes:
+  - name: workspace
+    mount_path: /app
+    read_only: false
+    size: "2g"
+
+  - name: cache
+    mount_path: /root/.cache
+    read_only: false
+    size: "500m"
+
+# Lifecycle commands
+commands:
+  init:
+    - "pip install --upgrade pip"
+    - "pip install poetry"
+
+  start:
+    - "cd /app && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+
+  stop:
+    - "pkill -f uvicorn"
+
+  healthcheck: "curl -f http://localhost:8000/health || exit 1"
+
+# Labels for filtering and identification
+labels:
+  category: backend
+  language: python
+  framework: fastapi
+  difficulty: intermediate
+  use_case: hiring
