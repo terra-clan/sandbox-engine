@@ -21,11 +21,16 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # Final stage
 FROM alpine:3.19
 
+# Docker group GID (should match host's docker group)
+ARG DOCKER_GID=990
+
 RUN apk add --no-cache ca-certificates tzdata docker-cli
 
-# Create non-root user
-RUN addgroup -g 1000 sandbox && \
-    adduser -u 1000 -G sandbox -D sandbox
+# Create non-root user with docker group access
+RUN addgroup -g ${DOCKER_GID} docker && \
+    addgroup -g 1000 sandbox && \
+    adduser -u 1000 -G sandbox -D sandbox && \
+    adduser sandbox docker
 
 WORKDIR /app
 
