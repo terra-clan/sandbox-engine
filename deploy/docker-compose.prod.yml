@@ -101,8 +101,8 @@ services:
       - TRAEFIK_ENABLED=true
       - SANDBOX_DOMAIN=terra-sandbox.ru
       - TRAEFIK_NETWORK=sandbox-network
-      - TRAEFIK_ENTRYPOINT=websecure
-      - TRAEFIK_CERT_RESOLVER=letsencrypt
+      - TRAEFIK_ENTRYPOINT=web
+      - TRAEFIK_CERT_RESOLVER=
       - TEMPLATES_DIR=/app/templates
       - MIGRATIONS_DIR=/app/migrations
     volumes:

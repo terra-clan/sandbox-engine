@@ -309,13 +309,17 @@ func (m *DockerManager) buildTraefikLabels(sb *models.Sandbox, tmpl *models.Temp
 		"traefik.docker.network": m.traefikConfig.Network,
 
 		// HTTP router
-		fmt.Sprintf("traefik.http.routers.%s.rule", routerName):             fmt.Sprintf("Host(`%s`)", sandboxHost),
-		fmt.Sprintf("traefik.http.routers.%s.entrypoints", routerName):      m.traefikConfig.EntryPoint,
-		fmt.Sprintf("traefik.http.routers.%s.tls", routerName):              "true",
-		fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", routerName): m.traefikConfig.CertResolver,
+		fmt.Sprintf("traefik.http.routers.%s.rule", routerName):        fmt.Sprintf("Host(`%s`)", sandboxHost),
+		fmt.Sprintf("traefik.http.routers.%s.entrypoints", routerName): m.traefikConfig.EntryPoint,
 
 		// Service (default port 8080)
 		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", routerName): "8080",
+	}
+
+	// Add TLS labels only if cert resolver is configured
+	if m.traefikConfig.CertResolver != "" {
+		labels[fmt.Sprintf("traefik.http.routers.%s.tls", routerName)] = "true"
+		labels[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", routerName)] = m.traefikConfig.CertResolver
 	}
 
 	// Add labels for each exposed port from template
@@ -326,9 +330,13 @@ func (m *DockerManager) buildTraefikLabels(sb *models.Sandbox, tmpl *models.Temp
 
 			labels[fmt.Sprintf("traefik.http.routers.%s.rule", portRouterName)] = fmt.Sprintf("Host(`%s`)", portHost)
 			labels[fmt.Sprintf("traefik.http.routers.%s.entrypoints", portRouterName)] = m.traefikConfig.EntryPoint
-			labels[fmt.Sprintf("traefik.http.routers.%s.tls", portRouterName)] = "true"
-			labels[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", portRouterName)] = m.traefikConfig.CertResolver
 			labels[fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", portRouterName)] = fmt.Sprintf("%d", port.Container)
+
+			// Add TLS labels only if cert resolver is configured
+			if m.traefikConfig.CertResolver != "" {
+				labels[fmt.Sprintf("traefik.http.routers.%s.tls", portRouterName)] = "true"
+				labels[fmt.Sprintf("traefik.http.routers.%s.tls.certresolver", portRouterName)] = m.traefikConfig.CertResolver
+			}
 		}
 	}
 
@@ -341,10 +349,8 @@ func (m *DockerManager) buildEndpoints(sb *models.Sandbox, tmpl *models.Template
 		return make(map[string]string)
 	}
 
+	// Always use https - SSL is terminated by nginx
 	scheme := "https"
-	if m.traefikConfig.EntryPoint == "web" {
-		scheme = "http"
-	}
 
 	endpoints := make(map[string]string)
 	endpoints["main"] = fmt.Sprintf("%s://%s.%s", scheme, sb.ID, m.traefikConfig.Domain)
