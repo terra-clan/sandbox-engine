@@ -120,6 +120,22 @@ services:
       # - "traefik.http.routers.sandbox-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.sandbox-api.loadbalancer.server.port=8080"
 
+  # Sandbox Web UI
+  sandbox-web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    image: sandbox-web:latest
+    container_name: sandbox-web
+    restart: unless-stopped
+    networks:
+      - sandbox-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sandbox-web.rule=Host(`terra-sandbox.ru`) || Host(`www.terra-sandbox.ru`)"
+      - "traefik.http.routers.sandbox-web.entrypoints=web"
+      - "traefik.http.services.sandbox-web.loadbalancer.server.port=80"
+
 networks:
   sandbox-network:
     name: sandbox-network
