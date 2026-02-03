@@ -1,18 +1,16 @@
 # Python Backend Development Sandbox Template
 # Used for hiring assessments and training tasks
-# Uses code-server (VS Code in browser)
+# Terminal-based with Claude Code CLI
 
 name: backend-python
-description: "Python backend development environment with FastAPI, PostgreSQL, and Redis"
+description: "Python backend development environment with FastAPI"
 
-base_image: ghcr.io/terra-clan/sandbox-engine/code-server-python:latest
+base_image: ghcr.io/terra-clan/sandbox-engine/workspace-python:latest
 
-# Shared services to provision for this sandbox
 services:
   - postgres
   - redis
 
-# Resource limits
 resources:
   cpu_limit: "2"
   memory_limit: "4Gi"
@@ -20,57 +18,41 @@ resources:
   memory_request: "512Mi"
   disk_limit: "10Gi"
 
-# Environment variables injected into container
-# Service credentials (POSTGRES_*, REDIS_*) are auto-injected
 env:
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUNBUFFERED: "1"
-  PIP_NO_CACHE_DIR: "1"
-  ENVIRONMENT: "sandbox"
+  ENVIRONMENT: sandbox
 
-# Time to live for this sandbox (default)
 ttl: 4h
 
-# Exposed ports
 expose:
-  - container: 8080
-    protocol: tcp
-    name: code
-    public: true
-
   - container: 8000
     protocol: tcp
     name: api
     public: true
 
-  - container: 5555
+  - container: 5678
     protocol: tcp
     name: debug
     public: false
 
-# Volume mounts
 volumes:
   - name: workspace
-    mount_path: /home/coder/workspace
+    mount_path: /workspace
     read_only: false
     size: "5Gi"
 
-  - name: cache
-    mount_path: /home/coder/.cache
+  - name: pip-cache
+    mount_path: /home/coder/.cache/pip
     read_only: false
     size: "1Gi"
 
-# Lifecycle commands
 commands:
   init: []
-
   start: []
-
   stop: []
+  healthcheck: "pgrep -x bash > /dev/null"
 
-  healthcheck: "curl -f http://localhost:8080/healthz || exit 1"
-
-# Labels for filtering and identification
 labels:
   category: backend
   language: python

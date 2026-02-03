@@ -1,0 +1,37 @@
+# Python workspace image for sandbox-engine
+# Python 3.12 + Claude Code CLI + common tools
+
+FROM ghcr.io/terra-clan/sandbox-engine/workspace-base:latest
+
+USER root
+
+# Install Python 3.12
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create symlinks
+RUN ln -sf /usr/bin/python3 /usr/bin/python \
+    && ln -sf /usr/bin/pip3 /usr/bin/pip
+
+# Install common Python tools
+RUN pip install --no-cache-dir --break-system-packages \
+    poetry \
+    pipenv \
+    black \
+    ruff \
+    mypy \
+    pytest \
+    ipython
+
+USER coder
+
+# Environment
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+CMD ["/bin/bash"]

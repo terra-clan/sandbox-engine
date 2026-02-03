@@ -40,6 +40,7 @@ type Manager interface {
 	List(ctx context.Context, filters models.ListFilters) ([]*models.Sandbox, error)
 	ExtendTTL(ctx context.Context, id string, duration time.Duration) error
 	GetLogs(ctx context.Context, id string, tail int) (string, error)
+	ExecAttach(ctx context.Context, containerID string) (string, io.ReadWriteCloser, error)
 	Ping(ctx context.Context) error
 	GetExpired(ctx context.Context) ([]*models.Sandbox, error)
 	Close() error
@@ -605,6 +606,35 @@ func (m *DockerManager) GetExpired(ctx context.Context) ([]*models.Sandbox, erro
 	}
 
 	return sandboxes, nil
+}
+
+// ExecAttach creates an interactive exec session to a container
+func (m *DockerManager) ExecAttach(ctx context.Context, containerID string) (string, io.ReadWriteCloser, error) {
+	execConfig := types.ExecConfig{
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+		Cmd:          []string{"/bin/bash", "--login"},
+		Env: []string{
+			"TERM=xterm-256color",
+			"COLORTERM=truecolor",
+		},
+	}
+
+	execResp, err := m.docker.ContainerExecCreate(ctx, containerID, execConfig)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create exec: %w", err)
+	}
+
+	attachResp, err := m.docker.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{
+		Tty: true,
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to attach exec: %w", err)
+	}
+
+	return execResp.ID, attachResp.Conn, nil
 }
 
 // Close cleans up manager resources

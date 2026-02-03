@@ -90,6 +90,9 @@ func (s *Server) setupRouter() {
 			})
 		})
 
+		// WebSocket terminal (authentication handled via query param)
+		r.Get("/ws/terminal/{id}", s.handleTerminalWS)
+
 		// Templates
 		r.Route("/templates", func(r chi.Router) {
 			r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)

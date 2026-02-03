@@ -1,0 +1,27 @@
+# Node.js workspace image for sandbox-engine
+# Node.js 20 + Claude Code CLI + common tools
+
+FROM ghcr.io/terra-clan/sandbox-engine/workspace-base:latest
+
+USER root
+
+# Node.js already installed in base image
+# Install additional Node.js tools
+RUN npm install -g \
+    typescript \
+    ts-node \
+    nodemon \
+    pnpm \
+    yarn
+
+# Install common dev dependencies globally for convenience
+RUN npm install -g \
+    eslint \
+    prettier
+
+USER coder
+
+# Environment
+ENV NODE_ENV=development
+
+CMD ["/bin/bash"]
