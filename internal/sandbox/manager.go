@@ -311,6 +311,7 @@ func (m *DockerManager) buildTraefikLabels(sb *models.Sandbox, tmpl *models.Temp
 		// HTTP router
 		fmt.Sprintf("traefik.http.routers.%s.rule", routerName):        fmt.Sprintf("Host(`%s`)", sandboxHost),
 		fmt.Sprintf("traefik.http.routers.%s.entrypoints", routerName): m.traefikConfig.EntryPoint,
+		fmt.Sprintf("traefik.http.routers.%s.service", routerName):     routerName,
 
 		// Service (default port 8080)
 		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", routerName): "8080",
@@ -330,6 +331,7 @@ func (m *DockerManager) buildTraefikLabels(sb *models.Sandbox, tmpl *models.Temp
 
 			labels[fmt.Sprintf("traefik.http.routers.%s.rule", portRouterName)] = fmt.Sprintf("Host(`%s`)", portHost)
 			labels[fmt.Sprintf("traefik.http.routers.%s.entrypoints", portRouterName)] = m.traefikConfig.EntryPoint
+			labels[fmt.Sprintf("traefik.http.routers.%s.service", portRouterName)] = portRouterName
 			labels[fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", portRouterName)] = fmt.Sprintf("%d", port.Container)
 
 			// Add TLS labels only if cert resolver is configured
