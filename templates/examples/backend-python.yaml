@@ -5,7 +5,7 @@
 name: backend-python
 description: "Python backend development environment with FastAPI"
 
-base_image: ghcr.io/terra-clan/sandbox-engine/workspace-python:latest
+base_image: workspace-python:latest
 
 services:
   - postgres

@@ -41,6 +41,7 @@ type Manager interface {
 	ExtendTTL(ctx context.Context, id string, duration time.Duration) error
 	GetLogs(ctx context.Context, id string, tail int) (string, error)
 	ExecAttach(ctx context.Context, containerID string) (string, io.ReadWriteCloser, error)
+	ExecResize(ctx context.Context, execID string, height, width uint) error
 	Ping(ctx context.Context) error
 	GetExpired(ctx context.Context) ([]*models.Sandbox, error)
 	Close() error
@@ -404,6 +405,11 @@ func (m *DockerManager) createContainer(ctx context.Context, sb *models.Sandbox,
 	}
 
 	containerConfig := &container.Config{
+		Tty:          true,
+		OpenStdin:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
 		Image:        tmpl.BaseImage,
 		Env:          env,
 		ExposedPorts: exposedPorts,
@@ -411,6 +417,7 @@ func (m *DockerManager) createContainer(ctx context.Context, sb *models.Sandbox,
 	}
 
 	hostConfig := &container.HostConfig{
+		Binds: []string{"claude-auth:/home/coder/.claude"},
 		Resources:    resources,
 		NetworkMode:  container.NetworkMode(m.config.Network),
 		AutoRemove:   false,
@@ -645,4 +652,12 @@ func (m *DockerManager) Close() error {
 	}
 
 	return m.docker.Close()
+}
+
+// ExecResize resizes the TTY of an exec session
+func (m *DockerManager) ExecResize(ctx context.Context, execID string, height, width uint) error {
+	return m.docker.ContainerExecResize(ctx, execID, container.ResizeOptions{
+		Height: height,
+		Width:  width,
+	})
 }

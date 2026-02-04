@@ -1,6 +1,51 @@
 import React, { useState, useEffect } from 'react';
 import { Workspace } from './views/Workspace';
-import { SandboxInfo, ApiResponse, SandboxResponse } from './types';
+import { SandboxInfo } from './types';
+
+// API response from sandbox-engine
+interface ApiSandbox {
+  id: string;
+  template_id: string;
+  user_id: string;
+  status: string;
+  created_at: string;
+  started_at?: string;
+  expires_at: string;
+  container_id?: string;
+  services?: Record<string, {
+    name: string;
+    type: string;
+    status: string;
+    credentials: Record<string, any>;
+  }>;
+  endpoints?: Record<string, string>;
+}
+
+interface ApiResponse {
+  success: boolean;
+  data?: ApiSandbox;
+  error?: { code: string; message: string } | string;
+}
+
+// Transform API response to frontend format
+const transformSandbox = (api: ApiSandbox): SandboxInfo => {
+  const services = api.services ? Object.entries(api.services).map(([key, svc]) => ({
+    name: svc.name,
+    port: svc.credentials?.port || 0,
+    status: svc.status === 'ready' ? 'running' as const : 'starting' as const,
+    url: svc.credentials?.uri
+  })) : [];
+
+  return {
+    id: api.id,
+    templateId: api.template_id,
+    status: api.status as 'creating' | 'running' | 'stopped' | 'error',
+    createdAt: api.created_at,
+    expiresAt: api.expires_at,
+    services,
+    workDir: '/workspace'
+  };
+};
 
 // Get config from URL parameters
 const getConfigFromUrl = () => {
@@ -35,12 +80,8 @@ const App: React.FC = () => {
 
     fetchSandboxInfo();
 
-    // Poll for updates every 5 seconds if not running yet
-    const interval = setInterval(() => {
-      if (sandbox?.status !== 'running') {
-        fetchSandboxInfo();
-      }
-    }, 5000);
+    // Poll for updates every 5 seconds
+    const interval = setInterval(fetchSandboxInfo, 5000);
 
     return () => clearInterval(interval);
   }, [config.sandboxId, config.apiToken]);
@@ -67,13 +108,15 @@ const App: React.FC = () => {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data: ApiResponse<SandboxResponse> = await response.json();
+      const data: ApiResponse = await response.json();
 
       if (data.success && data.data) {
-        setSandbox(data.data.sandbox);
+        const transformed = transformSandbox(data.data);
+        setSandbox(transformed);
         setError(null);
       } else {
-        throw new Error(data.error || 'Unknown error');
+        const errMsg = typeof data.error === 'string' ? data.error : data.error?.message || 'Unknown error';
+        throw new Error(errMsg);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch sandbox info';

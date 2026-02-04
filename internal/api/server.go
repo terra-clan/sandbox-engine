@@ -3,6 +3,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -50,12 +51,11 @@ func (s *Server) Router() http.Handler {
 func (s *Server) setupRouter() {
 	r := chi.NewRouter()
 
-	// Middleware stack
+	// Base middleware stack (no timeout - WebSocket needs long connections)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
 
 	// CORS configuration
 	r.Use(cors.Handler(cors.Options{
@@ -71,32 +71,37 @@ func (s *Server) setupRouter() {
 	r.Get("/health", s.handleHealth)
 	r.Get("/ready", s.handleReady)
 
-	// API v1 routes (protected by authentication)
+	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Apply authentication middleware to all /api/v1/* routes
 		r.Use(s.authMiddleware.Authenticate)
 
-		// Sandboxes
-		r.Route("/sandboxes", func(r chi.Router) {
-			r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleListSandboxes)
-			r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/", s.handleCreateSandbox)
-
-			r.Route("/{id}", func(r chi.Router) {
-				r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleGetSandbox)
-				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Delete("/", s.handleDeleteSandbox)
-				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/extend", s.handleExtendTTL)
-				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/stop", s.handleStopSandbox)
-				r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/logs", s.handleGetLogs)
-			})
-		})
-
-		// WebSocket terminal (authentication handled via query param)
+		// WebSocket terminal - NO timeout (needs long-lived connections)
 		r.Get("/ws/terminal/{id}", s.handleTerminalWS)
 
-		// Templates
-		r.Route("/templates", func(r chi.Router) {
-			r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)
-			r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/{name}", s.handleGetTemplate)
+		// REST API routes - with timeout
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(60 * time.Second))
+
+			// Sandboxes
+			r.Route("/sandboxes", func(r chi.Router) {
+				r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleListSandboxes)
+				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/", s.handleCreateSandbox)
+
+				r.Route("/{id}", func(r chi.Router) {
+					r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleGetSandbox)
+					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Delete("/", s.handleDeleteSandbox)
+					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/extend", s.handleExtendTTL)
+					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/stop", s.handleStopSandbox)
+					r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/logs", s.handleGetLogs)
+				})
+			})
+
+			// Templates
+			r.Route("/templates", func(r chi.Router) {
+				r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)
+				r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/{name}", s.handleGetTemplate)
+			})
 		})
 	})
 
@@ -110,6 +115,10 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 
 		defer func() {
+			// Skip noisy logging for WebSocket and health checks
+			if strings.Contains(r.URL.Path, "/ws/") || r.URL.Path == "/health" {
+				return
+			}
 			slog.Info("http request",
 				"method", r.Method,
 				"path", r.URL.Path,

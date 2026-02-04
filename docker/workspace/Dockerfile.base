@@ -1,47 +1,33 @@
 # Base workspace image for sandbox-engine
-# Contains common tools and Claude Code CLI
-
 FROM debian:bookworm-slim
 
-# Avoid prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base tools
-RUN apt-get update && apt-get install -y \
-    curl \
-    wget \
-    git \
-    vim \
-    nano \
-    htop \
-    jq \
-    tree \
-    unzip \
-    ca-certificates \
-    gnupg \
-    openssh-client \
-    postgresql-client \
-    redis-tools \
-    && rm -rf /var/lib/apt/lists/*
+# Install base tools including sudo
+RUN apt-get update && apt-get install -y     curl wget git vim nano htop jq tree unzip     ca-certificates gnupg openssh-client     postgresql-client redis-tools sudo     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (required for Claude Code CLI)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -     && apt-get install -y nodejs     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create workspace user
-RUN useradd -m -s /bin/bash -u 1000 coder
+# Create workspace user with sudo access
+RUN useradd -m -s /bin/bash -u 1000 coder     && echo 'coder ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # Set up workspace directory
 WORKDIR /workspace
 RUN chown -R coder:coder /workspace
 
-# Custom bash prompt
-RUN echo 'export PS1="\[\033[1;36m\]sandbox\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]$ "' >> /home/coder/.bashrc \
-    && echo 'export PS1="\[\033[1;36m\]sandbox\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]$ "' >> /root/.bashrc
+# Create .claude directory
+RUN mkdir -p /home/coder/.claude     && chown -R coder:coder /home/coder/.claude
+
+# Custom bash prompt and claude config restore
+RUN echo 'export PS1="\[\033[1;36m\]sandbox\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]$ "' >> /home/coder/.bashrc     && echo '# Restore Claude config from volume' >> /home/coder/.bashrc     && echo '[ -f ~/.claude/config.json ] && cp ~/.claude/config.json ~/.claude.json 2>/dev/null' >> /home/coder/.bashrc
+
+# Add entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Environment
 ENV TERM=xterm-256color
@@ -49,4 +35,5 @@ ENV COLORTERM=truecolor
 
 USER coder
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/bin/bash"]
