@@ -5,7 +5,7 @@
 name: backend-node
 description: "Node.js backend development environment with Express/NestJS"
 
-base_image: ghcr.io/terra-clan/sandbox-engine/workspace-node:latest
+base_image: workspace-node:latest
 
 services:
   - postgres

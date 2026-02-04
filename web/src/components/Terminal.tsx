@@ -27,7 +27,7 @@ export const Terminal: React.FC<TerminalProps> = ({
     const term = new XTerm({
       cursorBlink: true,
       fontSize: 14,
-      fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+      fontFamily: '"JetBrains Mono", "Fira Code", "Consolas", monospace',
       theme: {
         background: '#0f172a',
         foreground: '#e2e8f0',
@@ -90,17 +90,16 @@ export const Terminal: React.FC<TerminalProps> = ({
             term.write(msg.data);
             break;
           case 'connected':
-            console.log('Session connected:', msg.message);
+            console.log('Session connected:', msg.data);
             break;
           case 'exit':
             term.writeln(`\r\n\x1b[1;31m Process exited with code ${msg.code}\x1b[0m`);
             break;
           case 'error':
-            term.writeln(`\r\n\x1b[1;31m Error: ${msg.message}\x1b[0m`);
+            term.writeln(`\r\n\x1b[1;31m Error: ${msg.data}\x1b[0m`);
             break;
         }
       } catch {
-        // If not JSON, write as-is
         term.write(event.data);
       }
     };
@@ -122,6 +121,31 @@ export const Terminal: React.FC<TerminalProps> = ({
       }
     });
 
+    // Handle paste via keyboard
+    term.attachCustomKeyEventHandler((event) => {
+      // Handle Ctrl+V / Cmd+V for paste
+      if ((event.ctrlKey || event.metaKey) && event.key === 'v' && event.type === 'keydown') {
+        navigator.clipboard.readText().then((text) => {
+          if (ws.readyState === WebSocket.OPEN && text) {
+            ws.send(JSON.stringify({ type: 'input', data: text }));
+          }
+        }).catch(err => {
+          console.error('Failed to read clipboard:', err);
+        });
+        return false; // Prevent default
+      }
+      // Handle Ctrl+C / Cmd+C for copy
+      if ((event.ctrlKey || event.metaKey) && event.key === 'c' && event.type === 'keydown') {
+        const selection = term.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection);
+          return false; // Prevent default
+        }
+        // If no selection, send Ctrl+C to terminal
+      }
+      return true;
+    });
+
     // Resize handler
     const handleResize = () => {
       fitAddon.fit();
@@ -141,6 +165,14 @@ export const Terminal: React.FC<TerminalProps> = ({
       handleResize();
     });
     resizeObserver.observe(terminalRef.current);
+
+    // Focus terminal on click
+    terminalRef.current.addEventListener('click', () => {
+      term.focus();
+    });
+
+    // Focus terminal initially
+    setTimeout(() => term.focus(), 100);
 
     return () => {
       window.removeEventListener('resize', handleResize);

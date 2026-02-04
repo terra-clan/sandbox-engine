@@ -22,7 +22,7 @@ func NewAuthMiddleware(repo storage.Repository) *AuthMiddleware {
 
 // Authenticate verifies API key from Authorization header
 // Supports formats: "Bearer sk_xxx" or "sk_xxx" in Authorization header
-// Also supports X-API-Key header
+// Also supports X-API-Key header and ?token= query parameter (for WebSocket)
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiKey := extractAPIKey(r)
@@ -94,7 +94,7 @@ func (m *AuthMiddleware) RequirePermission(permission string) func(http.Handler)
 	}
 }
 
-// extractAPIKey extracts API key from request headers
+// extractAPIKey extracts API key from request headers or query params
 func extractAPIKey(r *http.Request) string {
 	// Try Authorization header first
 	authHeader := r.Header.Get("Authorization")
@@ -107,8 +107,13 @@ func extractAPIKey(r *http.Request) string {
 		return authHeader
 	}
 
-	// Fallback to X-API-Key header
-	return r.Header.Get("X-API-Key")
+	// Try X-API-Key header
+	if key := r.Header.Get("X-API-Key"); key != "" {
+		return key
+	}
+
+	// Fallback to query parameter (for WebSocket connections)
+	return r.URL.Query().Get("token")
 }
 
 // maskKey returns first 8 chars of key for safe logging

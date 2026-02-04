@@ -7,29 +7,26 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now
+		return true
 	},
 }
 
-// TerminalMessage represents a message sent over WebSocket
 type TerminalMessage struct {
-	Type string `json:"type"` // input, output, resize, connected, error
+	Type string `json:"type"`
 	Data string `json:"data,omitempty"`
 	Cols int    `json:"cols,omitempty"`
 	Rows int    `json:"rows,omitempty"`
 }
 
-// handleTerminalWS handles WebSocket connections for terminal access
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	sandboxID := chi.URLParam(r, "id")
 	if sandboxID == "" {
@@ -37,7 +34,6 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get sandbox to verify it exists and is running
 	sb, err := s.sandboxManager.Get(r.Context(), sandboxID)
 	if err != nil {
 		slog.Error("failed to get sandbox", "id", sandboxID, "error", err)
@@ -50,7 +46,6 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upgrade to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("failed to upgrade to websocket", "error", err)
@@ -60,8 +55,9 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("terminal websocket connected", "sandbox_id", sandboxID)
 
-	// Create docker exec session
-	execID, execConn, err := s.sandboxManager.ExecAttach(r.Context(), sb.ContainerID)
+	execCtx := context.Background()
+
+	execID, execConn, err := s.sandboxManager.ExecAttach(execCtx, sb.ContainerID)
 	if err != nil {
 		slog.Error("failed to create exec session", "error", err)
 		s.sendTerminalError(conn, "failed to connect to container")
@@ -71,19 +67,17 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("exec session created", "sandbox_id", sandboxID, "exec_id", execID)
 
-	// Send connected message
+	// Set initial terminal size (80x24 default)
+	if err := s.sandboxManager.ExecResize(execCtx, execID, 24, 80); err != nil {
+		slog.Warn("failed to set initial terminal size", "error", err)
+	}
+
 	s.sendTerminalMessage(conn, TerminalMessage{
 		Type: "connected",
 		Data: "Connected to sandbox terminal",
 	})
 
-	// Start Claude Code automatically
-	time.AfterFunc(500*time.Millisecond, func() {
-		execConn.Write([]byte("claude\n"))
-	})
-
-	// Create context for cleanup
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -107,10 +101,12 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if n > 0 {
-					s.sendTerminalMessage(conn, TerminalMessage{
+					if err := s.sendTerminalMessage(conn, TerminalMessage{
 						Type: "output",
 						Data: string(buf[:n]),
-					})
+					}); err != nil {
+						return
+					}
 				}
 			}
 		}
@@ -142,24 +138,15 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 				switch msg.Type {
 				case "input":
-					// Block dangerous signals (Ctrl+C, Ctrl+D, Ctrl+Z)
-					// These could interrupt Claude Code
-					data := msg.Data
-					blocked := false
-					for _, b := range []byte{0x03, 0x04, 0x1a} { // Ctrl+C, Ctrl+D, Ctrl+Z
-						if len(data) == 1 && data[0] == b {
-							blocked = true
-							break
+					execConn.Write([]byte(msg.Data))
+				case "resize":
+					if msg.Cols > 0 && msg.Rows > 0 {
+						if err := s.sandboxManager.ExecResize(execCtx, execID, uint(msg.Rows), uint(msg.Cols)); err != nil {
+							slog.Debug("failed to resize terminal", "error", err, "cols", msg.Cols, "rows", msg.Rows)
+						} else {
+							slog.Debug("terminal resized", "cols", msg.Cols, "rows", msg.Rows)
 						}
 					}
-					if !blocked {
-						execConn.Write([]byte(data))
-					}
-				case "resize":
-					// Resize is handled by docker exec, but we can log it
-					slog.Debug("terminal resize", "cols", msg.Cols, "rows", msg.Rows)
-					// Note: Resizing docker exec requires recreating the session
-					// For now we ignore resize events
 				}
 			}
 		}
@@ -169,15 +156,17 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	slog.Info("terminal websocket disconnected", "sandbox_id", sandboxID)
 }
 
-func (s *Server) sendTerminalMessage(conn *websocket.Conn, msg TerminalMessage) {
+func (s *Server) sendTerminalMessage(conn *websocket.Conn, msg TerminalMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		slog.Error("failed to marshal terminal message", "error", err)
-		return
+		return err
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		slog.Debug("failed to send terminal message", "error", err)
+		return err
 	}
+	return nil
 }
 
 func (s *Server) sendTerminalError(conn *websocket.Conn, message string) {

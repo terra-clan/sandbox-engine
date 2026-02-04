@@ -5,7 +5,7 @@
 name: backend-go
 description: "Go backend development environment"
 
-base_image: ghcr.io/terra-clan/sandbox-engine/workspace-go:latest
+base_image: workspace-go:latest
 
 services:
   - postgres
