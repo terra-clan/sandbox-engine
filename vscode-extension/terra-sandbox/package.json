@@ -1,7 +1,7 @@
 {
   "name": "terra-sandbox",
   "displayName": "Terra Sandbox",
-  "description": "Sandbox environment panel for Terra Hiring and SOTA Projects",
+  "description": "Sandbox environment panel for Terra Sandbox",
   "version": "0.1.0",
   "publisher": "terra-clan",
   "engines": {
@@ -40,8 +40,8 @@
         "category": "Terra Sandbox"
       },
       {
-        "command": "terra-sandbox.submit",
-        "title": "Submit Work",
+        "command": "terra-sandbox.openWeb",
+        "title": "Open Web UI",
         "category": "Terra Sandbox"
       }
     ]

@@ -33,8 +33,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Обработка сообщений от webview
         webviewView.webview.onDidReceiveMessage(message => {
             switch (message.command) {
-                case 'submit':
-                    vscode.commands.executeCommand('terra-sandbox.submit');
+                case 'openWeb':
+                    vscode.commands.executeCommand('terra-sandbox.openWeb');
                     break;
                 case 'openService':
                     vscode.env.openExternal(vscode.Uri.parse(message.url));
@@ -245,8 +245,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
 
             <div class="section">
-                <div class="section-title">Task</div>
-                <div class="task-description">${this._escapeHtml(info?.taskDescription || 'Loading...')}</div>
+                <div class="section-title">Template</div>
+                <div class="task-description">${this._escapeHtml(info?.templateId || 'unknown')}</div>
             </div>
 
             <div class="section">
@@ -255,7 +255,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
 
             <div class="section">
-                <button class="submit-btn" onclick="submit()">Submit Work</button>
+                <button class="submit-btn" onclick="openWeb()">Open Web UI</button>
             </div>
 
             <div class="sandbox-id">
@@ -265,8 +265,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <script>
                 const vscode = acquireVsCodeApi();
 
-                function submit() {
-                    vscode.postMessage({ command: 'submit' });
+                function openWeb() {
+                    vscode.postMessage({ command: 'openWeb' });
                 }
 
                 function openService(url) {

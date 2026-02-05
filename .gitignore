@@ -45,3 +45,12 @@ dist/
 
 # Docker
 docker/services/init-scripts/
+
+# Web frontend
+web/node_modules/
+
+# Claude Code
+.claude/
+
+# Windows artifacts
+nul

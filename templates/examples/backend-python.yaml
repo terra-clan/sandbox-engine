@@ -1,5 +1,5 @@
 # Python Backend Development Sandbox Template
-# Used for hiring assessments and training tasks
+# General-purpose development sandbox
 # Terminal-based with Claude Code CLI
 
 name: backend-python
@@ -58,4 +58,4 @@ labels:
   language: python
   framework: fastapi
   difficulty: intermediate
-  use_case: hiring
+  use_case: sandbox

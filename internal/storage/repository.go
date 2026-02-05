@@ -22,6 +22,15 @@ type Repository interface {
 	UpdateService(ctx context.Context, sandboxID string, svc *models.ServiceInstance) error
 	DeleteServices(ctx context.Context, sandboxID string) error
 
+	// Sessions
+	CreateSession(ctx context.Context, s *models.Session) error
+	GetSessionByToken(ctx context.Context, token string) (*models.Session, error)
+	GetSessionByID(ctx context.Context, id string) (*models.Session, error)
+	UpdateSession(ctx context.Context, s *models.Session) error
+	DeleteSession(ctx context.Context, id string) error
+	ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error)
+	GetExpiredSessions(ctx context.Context) ([]*models.Session, error)
+
 	// API Clients
 	GetClientByApiKey(ctx context.Context, apiKey string) (*models.ApiClient, error)
 	UpdateClientLastUsed(ctx context.Context, apiKey string) error

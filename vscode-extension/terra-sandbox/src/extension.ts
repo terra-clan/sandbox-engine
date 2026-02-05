@@ -22,22 +22,14 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Команда "Сдать работу"
+    // Команда "Открыть Web UI"
     context.subscriptions.push(
-        vscode.commands.registerCommand('terra-sandbox.submit', async () => {
-            const confirm = await vscode.window.showWarningMessage(
-                'Are you sure you want to submit your work?',
-                { modal: true },
-                'Yes, Submit'
-            );
-
-            if (confirm === 'Yes, Submit') {
-                // TODO: API call to sandbox-engine
-                // const sandboxId = process.env.SANDBOX_ID;
-                // const apiUrl = process.env.SANDBOX_API_URL || 'http://localhost:8080';
-                // await fetch(`${apiUrl}/api/v1/sandboxes/${sandboxId}/submit`, { method: 'POST' });
-
-                vscode.window.showInformationMessage('Work submitted for review!');
+        vscode.commands.registerCommand('terra-sandbox.openWeb', () => {
+            const webUrl = process.env.SANDBOX_WEB_URL;
+            if (webUrl) {
+                vscode.env.openExternal(vscode.Uri.parse(webUrl));
+            } else {
+                vscode.window.showWarningMessage('Web UI URL not configured');
             }
         })
     );

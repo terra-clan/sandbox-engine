@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, useParams } from 'react-router-dom';
 import { Workspace } from './views/Workspace';
+import { JoinPage } from './views/JoinPage';
 import { SandboxInfo } from './types';
 
 // API response from sandbox-engine
@@ -29,7 +31,7 @@ interface ApiResponse {
 
 // Transform API response to frontend format
 const transformSandbox = (api: ApiSandbox): SandboxInfo => {
-  const services = api.services ? Object.entries(api.services).map(([key, svc]) => ({
+  const services = api.services ? Object.entries(api.services).map(([_, svc]) => ({
     name: svc.name,
     port: svc.credentials?.port || 0,
     status: svc.status === 'ready' ? 'running' as const : 'starting' as const,
@@ -47,88 +49,95 @@ const transformSandbox = (api: ApiSandbox): SandboxInfo => {
   };
 };
 
-// Get config from URL parameters
-const getConfigFromUrl = () => {
+// Resolve base URLs from current location or query params
+const resolveBaseUrls = () => {
   const params = new URLSearchParams(window.location.search);
+  const proto = window.location.protocol === 'https:' ? 'https' : 'http';
+  const wsProto = proto === 'https' ? 'wss' : 'ws';
+  const host = window.location.host;
 
   return {
-    sandboxId: params.get('sandbox') || '',
-    apiToken: params.get('token') || '',
-    apiBaseUrl: params.get('api') || 'https://api.terra-sandbox.ru',
-    wsBaseUrl: params.get('ws') || 'wss://api.terra-sandbox.ru'
+    apiBaseUrl: params.get('api') || `${proto}://${host}`,
+    wsBaseUrl: params.get('ws') || `${wsProto}://${host}`,
   };
 };
 
-const App: React.FC = () => {
-  const [config] = useState(getConfigFromUrl);
+// --- Join route ---
+
+const JoinRoute: React.FC = () => {
+  const { token } = useParams<{ token: string }>();
+  const { apiBaseUrl, wsBaseUrl } = resolveBaseUrls();
+
+  if (!token) {
+    return (
+      <div className="h-screen bg-slate-900 flex items-center justify-center">
+        <p className="text-red-400">Invalid join link</p>
+      </div>
+    );
+  }
+
+  return <JoinPage token={token} apiBaseUrl={apiBaseUrl} wsBaseUrl={wsBaseUrl} />;
+};
+
+// --- Direct workspace route (legacy: ?sandbox=&token=) ---
+
+const WorkspaceRoute: React.FC = () => {
+  const params = new URLSearchParams(window.location.search);
+  const sandboxId = params.get('sandbox') || '';
+  const apiToken = params.get('token') || '';
+  const { apiBaseUrl, wsBaseUrl } = resolveBaseUrls();
+
   const [sandbox, setSandbox] = useState<SandboxInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!config.sandboxId) {
-      setError('No sandbox ID provided. Add ?sandbox=xxx to URL');
+    if (!sandboxId || !apiToken) {
+      setError('No sandbox ID or API token provided');
       setLoading(false);
       return;
     }
 
-    if (!config.apiToken) {
-      setError('No API token provided. Add &token=xxx to URL');
-      setLoading(false);
-      return;
-    }
+    const fetchSandboxInfo = async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/v1/sandboxes/${sandboxId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${apiToken}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) throw new Error('Invalid or expired API token');
+          if (response.status === 404) throw new Error('Sandbox not found');
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data: ApiResponse = await response.json();
+        if (data.success && data.data) {
+          setSandbox(transformSandbox(data.data));
+          setError(null);
+        } else {
+          const errMsg = typeof data.error === 'string' ? data.error : data.error?.message || 'Unknown error';
+          throw new Error(errMsg);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to fetch sandbox info';
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    };
 
     fetchSandboxInfo();
-
-    // Poll for updates every 5 seconds
     const interval = setInterval(fetchSandboxInfo, 5000);
-
     return () => clearInterval(interval);
-  }, [config.sandboxId, config.apiToken]);
+  }, [sandboxId, apiToken, apiBaseUrl]);
 
-  const fetchSandboxInfo = async () => {
-    try {
-      const response = await fetch(
-        `${config.apiBaseUrl}/api/v1/sandboxes/${config.sandboxId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${config.apiToken}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Invalid or expired API token');
-        }
-        if (response.status === 404) {
-          throw new Error('Sandbox not found');
-        }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data: ApiResponse = await response.json();
-
-      if (data.success && data.data) {
-        const transformed = transformSandbox(data.data);
-        setSandbox(transformed);
-        setError(null);
-      } else {
-        const errMsg = typeof data.error === 'string' ? data.error : data.error?.message || 'Unknown error';
-        throw new Error(errMsg);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch sandbox info';
-      setError(message);
-      console.error('Failed to fetch sandbox:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Show error page if no config
-  if (!config.sandboxId || !config.apiToken) {
+  if (!sandboxId || !apiToken) {
     return (
       <div className="h-screen bg-slate-900 flex items-center justify-center">
         <div className="max-w-md text-center px-4">
@@ -150,13 +159,26 @@ const App: React.FC = () => {
   return (
     <Workspace
       sandbox={sandbox}
-      sandboxId={config.sandboxId}
-      apiToken={config.apiToken}
-      apiBaseUrl={config.apiBaseUrl}
-      wsBaseUrl={config.wsBaseUrl}
+      sandboxId={sandboxId}
+      apiToken={apiToken}
+      apiBaseUrl={apiBaseUrl}
+      wsBaseUrl={wsBaseUrl}
       loading={loading}
       error={error}
     />
+  );
+};
+
+// --- App with routing ---
+
+const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/join/:token" element={<JoinRoute />} />
+        <Route path="*" element={<WorkspaceRoute />} />
+      </Routes>
+    </BrowserRouter>
   );
 };
 

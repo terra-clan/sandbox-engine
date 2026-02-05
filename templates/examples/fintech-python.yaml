@@ -1,0 +1,79 @@
+# Python Backend Development Sandbox Template
+# General-purpose development sandbox
+
+name: fintech-python
+description: "Fintech Trading Platform sandbox environment"
+
+base_image: python:3.12-slim
+
+# Shared services to provision for this sandbox
+services:
+  - postgres
+  - redis
+
+# Resource limits
+resources:
+  cpu_limit: "2"
+  memory_limit: "1g"
+  cpu_request: "0.5"
+  memory_request: "256m"
+  disk_limit: "5g"
+
+# Environment variables injected into container
+# Service credentials (POSTGRES_*, REDIS_*) are auto-injected
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  PIP_NO_CACHE_DIR: "1"
+  ENVIRONMENT: "sandbox"
+
+# Time to live for this sandbox (default)
+ttl: 2h
+
+# Exposed ports
+expose:
+  - container: 8000
+    protocol: tcp
+    name: api
+    public: true
+    traefik_rule: "PathPrefix(`/`)"
+
+  - container: 5555
+    protocol: tcp
+    name: debug
+    public: false
+
+# Volume mounts
+volumes:
+  - name: workspace
+    mount_path: /app
+    read_only: false
+    size: "2g"
+
+  - name: cache
+    mount_path: /root/.cache
+    read_only: false
+    size: "500m"
+
+# Lifecycle commands
+commands:
+  init:
+    - "pip install --upgrade pip"
+    - "pip install fastapi uvicorn"
+
+  start:
+    # Start a simple HTTP server that stays alive
+    - "python -m http.server 8000"
+
+  stop:
+    - "pkill -f python"
+
+  healthcheck: "curl -sf http://localhost:8000/ || exit 1"
+
+# Labels for filtering and identification
+labels:
+  category: backend
+  language: python
+  framework: fastapi
+  difficulty: intermediate
+  use_case: sandbox

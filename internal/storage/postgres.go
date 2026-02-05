@@ -603,6 +603,334 @@ func (r *PostgresRepository) UpdateClientLastUsed(ctx context.Context, apiKey st
 	return nil
 }
 
+// --- Sessions ---
+
+// CreateSession creates a new session record
+func (r *PostgresRepository) CreateSession(ctx context.Context, s *models.Session) error {
+	envJSON, err := json.Marshal(s.Env)
+	if err != nil {
+		return fmt.Errorf("failed to marshal env: %w", err)
+	}
+
+	metadataJSON, err := json.Marshal(s.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO sessions (id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`
+
+	_, err = r.pool.Exec(ctx, query,
+		s.ID,
+		s.Token,
+		s.TemplateID,
+		string(s.Status),
+		nullString(s.StatusMessage),
+		envJSON,
+		metadataJSON,
+		s.TTLSeconds,
+		nullString(s.SandboxID),
+		s.CreatedAt,
+		nullTime(s.ActivatedAt),
+		nullTime(s.ExpiresAt),
+		nullString(s.CreatedBy),
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	return nil
+}
+
+// GetSessionByToken retrieves a session by its join token
+func (r *PostgresRepository) GetSessionByToken(ctx context.Context, token string) (*models.Session, error) {
+	return r.getSession(ctx, "token", token)
+}
+
+// GetSessionByID retrieves a session by its ID
+func (r *PostgresRepository) GetSessionByID(ctx context.Context, id string) (*models.Session, error) {
+	return r.getSession(ctx, "id", id)
+}
+
+func (r *PostgresRepository) getSession(ctx context.Context, field, value string) (*models.Session, error) {
+	query := fmt.Sprintf(`
+		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by
+		FROM sessions
+		WHERE %s = $1
+	`, field)
+
+	var s models.Session
+	var statusStr string
+	var statusMsg, sandboxID, createdBy sql.NullString
+	var activatedAt, expiresAt sql.NullTime
+	var envJSON, metadataJSON []byte
+
+	err := r.pool.QueryRow(ctx, query, value).Scan(
+		&s.ID,
+		&s.Token,
+		&s.TemplateID,
+		&statusStr,
+		&statusMsg,
+		&envJSON,
+		&metadataJSON,
+		&s.TTLSeconds,
+		&sandboxID,
+		&s.CreatedAt,
+		&activatedAt,
+		&expiresAt,
+		&createdBy,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	s.Status = models.SessionStatus(statusStr)
+	s.StatusMessage = statusMsg.String
+	s.SandboxID = sandboxID.String
+	s.CreatedBy = createdBy.String
+
+	if activatedAt.Valid {
+		s.ActivatedAt = &activatedAt.Time
+	}
+	if expiresAt.Valid {
+		s.ExpiresAt = &expiresAt.Time
+	}
+
+	if envJSON != nil {
+		if err := json.Unmarshal(envJSON, &s.Env); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal env: %w", err)
+		}
+	}
+
+	if metadataJSON != nil {
+		if err := json.Unmarshal(metadataJSON, &s.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+
+	return &s, nil
+}
+
+// UpdateSession updates an existing session
+func (r *PostgresRepository) UpdateSession(ctx context.Context, s *models.Session) error {
+	envJSON, err := json.Marshal(s.Env)
+	if err != nil {
+		return fmt.Errorf("failed to marshal env: %w", err)
+	}
+
+	metadataJSON, err := json.Marshal(s.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		UPDATE sessions
+		SET status = $2, status_message = $3, sandbox_id = $4, activated_at = $5, expires_at = $6, env = $7, metadata = $8
+		WHERE id = $1
+	`
+
+	result, err := r.pool.Exec(ctx, query,
+		s.ID,
+		string(s.Status),
+		nullString(s.StatusMessage),
+		nullString(s.SandboxID),
+		nullTime(s.ActivatedAt),
+		nullTime(s.ExpiresAt),
+		envJSON,
+		metadataJSON,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to update session: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("session not found: %s", s.ID)
+	}
+
+	return nil
+}
+
+// DeleteSession deletes a session by ID
+func (r *PostgresRepository) DeleteSession(ctx context.Context, id string) error {
+	query := `DELETE FROM sessions WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("session not found: %s", id)
+	}
+
+	return nil
+}
+
+// ListSessions returns sessions with optional status filter
+func (r *PostgresRepository) ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error) {
+	query := `
+		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by
+		FROM sessions
+		WHERE 1=1
+	`
+	args := make([]interface{}, 0)
+	argNum := 1
+
+	if status != "" {
+		query += fmt.Sprintf(" AND status = $%d", argNum)
+		args = append(args, status)
+		argNum++
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argNum)
+		args = append(args, limit)
+		argNum++
+	}
+
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argNum)
+		args = append(args, offset)
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []*models.Session
+
+	for rows.Next() {
+		var s models.Session
+		var statusStr string
+		var statusMsg, sandboxID, createdBy sql.NullString
+		var activatedAt, expiresAt sql.NullTime
+		var envJSON, metadataJSON []byte
+
+		err := rows.Scan(
+			&s.ID,
+			&s.Token,
+			&s.TemplateID,
+			&statusStr,
+			&statusMsg,
+			&envJSON,
+			&metadataJSON,
+			&s.TTLSeconds,
+			&sandboxID,
+			&s.CreatedAt,
+			&activatedAt,
+			&expiresAt,
+			&createdBy,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+
+		s.Status = models.SessionStatus(statusStr)
+		s.StatusMessage = statusMsg.String
+		s.SandboxID = sandboxID.String
+		s.CreatedBy = createdBy.String
+
+		if activatedAt.Valid {
+			s.ActivatedAt = &activatedAt.Time
+		}
+		if expiresAt.Valid {
+			s.ExpiresAt = &expiresAt.Time
+		}
+
+		if envJSON != nil {
+			json.Unmarshal(envJSON, &s.Env)
+		}
+		if metadataJSON != nil {
+			json.Unmarshal(metadataJSON, &s.Metadata)
+		}
+
+		sessions = append(sessions, &s)
+	}
+
+	return sessions, rows.Err()
+}
+
+// GetExpiredSessions returns active sessions that have expired
+func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.Session, error) {
+	query := `
+		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by
+		FROM sessions
+		WHERE status = 'active'
+		  AND expires_at < NOW()
+		ORDER BY expires_at ASC
+	`
+
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get expired sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []*models.Session
+
+	for rows.Next() {
+		var s models.Session
+		var statusStr string
+		var statusMsg, sandboxID, createdBy sql.NullString
+		var activatedAt, expiresAt sql.NullTime
+		var envJSON, metadataJSON []byte
+
+		err := rows.Scan(
+			&s.ID,
+			&s.Token,
+			&s.TemplateID,
+			&statusStr,
+			&statusMsg,
+			&envJSON,
+			&metadataJSON,
+			&s.TTLSeconds,
+			&sandboxID,
+			&s.CreatedAt,
+			&activatedAt,
+			&expiresAt,
+			&createdBy,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+
+		s.Status = models.SessionStatus(statusStr)
+		s.StatusMessage = statusMsg.String
+		s.SandboxID = sandboxID.String
+		s.CreatedBy = createdBy.String
+
+		if activatedAt.Valid {
+			s.ActivatedAt = &activatedAt.Time
+		}
+		if expiresAt.Valid {
+			s.ExpiresAt = &expiresAt.Time
+		}
+
+		if envJSON != nil {
+			json.Unmarshal(envJSON, &s.Env)
+		}
+		if metadataJSON != nil {
+			json.Unmarshal(metadataJSON, &s.Metadata)
+		}
+
+		sessions = append(sessions, &s)
+	}
+
+	return sessions, rows.Err()
+}
+
 // Helper functions for nullable values
 
 func nullString(s string) sql.NullString {

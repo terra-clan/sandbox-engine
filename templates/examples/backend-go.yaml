@@ -1,5 +1,5 @@
 # Go Backend Development Sandbox Template
-# Used for hiring assessments and training tasks
+# General-purpose development sandbox
 # Terminal-based with Claude Code CLI
 
 name: backend-go
@@ -56,4 +56,4 @@ labels:
   category: backend
   language: go
   difficulty: intermediate
-  use_case: hiring
+  use_case: sandbox
