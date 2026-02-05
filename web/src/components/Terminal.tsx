@@ -6,12 +6,14 @@ import '@xterm/xterm/css/xterm.css';
 interface TerminalProps {
   sandboxId: string;
   apiToken: string;
+  sessionToken?: string;
   wsBaseUrl?: string;
 }
 
 export const Terminal: React.FC<TerminalProps> = ({
   sandboxId,
   apiToken,
+  sessionToken,
   wsBaseUrl = 'wss://api.terra-sandbox.ru'
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -63,8 +65,10 @@ export const Terminal: React.FC<TerminalProps> = ({
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Connect to WebSocket
-    const wsUrl = `${wsBaseUrl}/api/v1/ws/terminal/${sandboxId}?token=${apiToken}`;
+    // Connect to WebSocket — use session endpoint if sessionToken provided
+    const wsUrl = sessionToken
+      ? `${wsBaseUrl}/api/v1/ws/session-terminal/${sandboxId}?session_token=${sessionToken}`
+      : `${wsBaseUrl}/api/v1/ws/terminal/${sandboxId}?token=${apiToken}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -180,7 +184,7 @@ export const Terminal: React.FC<TerminalProps> = ({
       ws.close();
       term.dispose();
     };
-  }, [sandboxId, apiToken, wsBaseUrl]);
+  }, [sandboxId, apiToken, sessionToken, wsBaseUrl]);
 
   return (
     <div className="h-full flex flex-col bg-slate-900 rounded-lg overflow-hidden border border-slate-700">

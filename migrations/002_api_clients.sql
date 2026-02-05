@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS api_clients (
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     last_used_at TIMESTAMP WITH TIME ZONE,
-    permissions JSONB DEFAULT '["sandboxes:read", "sandboxes:write", "templates:read"]',
+    permissions JSONB DEFAULT '["sandboxes:read", "sandboxes:write", "templates:read", "sessions:read", "sessions:write"]',
     metadata JSONB DEFAULT '{}'
 );
 
@@ -14,6 +14,6 @@ CREATE INDEX IF NOT EXISTS idx_api_clients_api_key ON api_clients(api_key);
 
 -- Insert default clients (for development)
 INSERT INTO api_clients (name, api_key, permissions) VALUES
-    ('terra-hiring', 'sk_dev_terrahiring_xxxxxxxxxxxxx', '["sandboxes:*", "templates:*"]'),
-    ('sota-projects', 'sk_dev_sotaprojects_xxxxxxxxxxxxx', '["sandboxes:*", "templates:*"]')
+    ('terra-sandbox', 'sk_dev_terrasandbox_xxxxxxxxxxxxx', '["sandboxes:*", "templates:*", "sessions:*"]'),
+    ('terra-admin', 'sk_dev_terraadmin_xxxxxxxxxxxxx', '["sandboxes:*", "templates:*", "sessions:*"]')
 ON CONFLICT DO NOTHING;

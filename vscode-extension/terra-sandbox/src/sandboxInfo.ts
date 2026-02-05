@@ -6,16 +6,18 @@ export interface ServiceInfo {
 
 export interface SandboxInfo {
     sandboxId: string;
-    taskDescription: string;
+    templateId: string;
     expiresAt: string;
     services: ServiceInfo[];
+    webUrl: string;
 }
 
 export function loadSandboxInfo(): SandboxInfo {
     // Загружаем из ENV переменных которые sandbox-engine инжектит в контейнер
     const sandboxId = process.env.SANDBOX_ID || 'unknown';
-    const taskDescription = process.env.TASK_DESCRIPTION || 'Описание задания не загружено';
+    const templateId = process.env.SANDBOX_TEMPLATE || 'unknown';
     const expiresAt = process.env.SANDBOX_EXPIRES_AT || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const webUrl = process.env.SANDBOX_WEB_URL || '';
 
     // Парсим сервисы из JSON
     let services: ServiceInfo[] = [];
@@ -23,7 +25,6 @@ export function loadSandboxInfo(): SandboxInfo {
         const servicesJson = process.env.SANDBOX_SERVICES || '[]';
         services = JSON.parse(servicesJson);
     } catch (e) {
-        // Fallback для демонстрации
         services = [
             { name: 'PostgreSQL', status: 'online' },
             { name: 'Redis', status: 'online' },
@@ -32,8 +33,9 @@ export function loadSandboxInfo(): SandboxInfo {
 
     return {
         sandboxId,
-        taskDescription,
+        templateId,
         expiresAt,
-        services
+        services,
+        webUrl
     };
 }

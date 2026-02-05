@@ -1,160 +1,135 @@
-# Sandbox Engine
+# CLAUDE.md
 
-Изолированные sandbox-среды с Claude Code CLI для hiring-задач и обучения.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Архитектура
+## Project Overview
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Web UI        │────▶│  Sandbox Engine  │────▶│  Docker         │
-│   (React)       │     │  (Go API)        │     │  Containers     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                       │                        │
-        │ WebSocket             │                        │
-        └───────────────────────┼────────────────────────┘
-                                │
-                    ┌───────────┴───────────┐
-                    │     Traefik           │
-                    │  (Reverse Proxy)      │
-                    └───────────────────────┘
-```
+**Sandbox Engine** — Go service that creates isolated Docker-based development environments with web terminal access. Part of the Terra ecosystem alongside **assessment-service** (orchestrator) and **proxy-api** (API key management).
 
-## Структура проекта
-
-```
-sandbox-engine/
-├── cmd/sandbox-engine/     # Entry point
-├── internal/
-│   ├── api/                # HTTP handlers, WebSocket terminal
-│   ├── config/             # Configuration
-│   ├── models/             # Domain models
-│   ├── sandbox/            # Docker container management
-│   ├── services/           # Business logic
-│   ├── storage/            # PostgreSQL repository
-│   └── templates/          # Template loader
-├── docker/
-│   ├── workspace/          # Workspace images (base, python, node, go)
-│   └── services/           # Service images (postgres, redis)
-├── deploy/                 # Docker Compose для prod
-├── web/                    # React frontend (xterm.js terminal)
-├── templates/              # YAML шаблоны sandbox-ов
-└── migrations/             # SQL миграции
-```
-
-## Ключевые компоненты
-
-### API Endpoints
-
-- `POST /api/v1/sandboxes` — создать sandbox
-- `GET /api/v1/sandboxes/{id}` — получить sandbox
-- `DELETE /api/v1/sandboxes/{id}` — удалить sandbox
-- `GET /api/v1/ws/terminal/{id}` — WebSocket терминал
-- `GET /api/v1/templates` — список шаблонов
-
-### Аутентификация
-
-API использует API-ключи (таблица `api_clients`):
-- Header: `Authorization: Bearer <key>` или `X-API-Key: <key>`
-- WebSocket: query param `?token=<key>`
-
-### Claude Code Auth
-
-Credentials Claude Code сохраняются в Docker volume `claude-auth`:
-- Volume mount: `/home/coder/.claude`
-- При старте контейнера `entrypoint.sh` копирует `~/.claude/config.json` → `~/.claude.json`
-- Это позволяет пропустить onboarding при повторных запусках
-
-**Важные файлы:**
-- `~/.claude.json` — конфиг с `hasCompletedOnboarding: true`
-- `~/.claude/.credentials.json` — OAuth токены
-- `~/.claude/config.json` — копия конфига в volume
-
-## Локальная разработка
+## Commands
 
 ```bash
-# Запуск с .env
-cp .env.example .env
-# Отредактировать .env
+make build          # CGO_ENABLED=0 go build → bin/sandbox-engine
+make dev            # go run ./cmd/sandbox-engine
+make test           # go test -v -race -coverprofile=coverage.out ./...
+make test-short     # go test -v -short ./...
+make lint           # golangci-lint run ./...
+make lint-fix       # golangci-lint run --fix ./...
+make services-up    # Start postgres + redis + traefik (docker compose)
+make services-down  # Stop dev services
 
-# Запуск
-make run
+# Web UI (React)
+cd web && npm run dev    # Vite dev server (:5173)
+cd web && npm run build  # Production build
 
-# Или через Docker Compose
-cd deploy && docker compose up -d
-```
-
-## Продакшен (Netcup)
-
-```bash
-# SSH на сервер
-ssh terra@$(doppler secrets get NETCUP_IP --project servers --config dev --plain)
-
-# Директория
-cd /var/www/sandbox-engine
-
-# Статус
-docker compose -f deploy/docker-compose.prod.yml ps
-
-# Логи
-docker compose -f deploy/docker-compose.prod.yml logs -f sandbox-engine
-
-# Пересборка образов
-cd docker/workspace && ./build.sh
-```
-
-## Домены
-
-- `terra-sandbox.ru` — Web UI
-- `api.terra-sandbox.ru` — API
-- `traefik.terra-sandbox.ru` — Traefik dashboard
-
-## Шаблоны
-
-Шаблоны в `templates/examples/`:
-- `backend-python.yaml` — Python + FastAPI
-- `backend-node.yaml` — Node.js
-- `backend-go.yaml` — Go
-
-Формат:
-```yaml
-name: backend-python
-base_image: workspace-python:latest
-services:
-  - postgres
-  - redis
-resources:
-  cpu_limit: "2"
-  memory_limit: "4Gi"
-ttl: 4h
-expose:
-  - container: 8000
-    public: true
-```
-
-## Частые задачи
-
-### Пересборка workspace образов
-
-```bash
-ssh terra@<server>
-cd /var/www/sandbox-engine/docker/workspace
+# Workspace Docker images
+cd docker/workspace
 docker build -f Dockerfile.base -t workspace-base:latest .
 docker build -f Dockerfile.python -t workspace-python:latest .
+# Tag for FROM reference:
+docker tag workspace-base:latest ghcr.io/terra-clan/sandbox-engine/workspace-base:latest
 ```
 
-### Проверка Claude Code auth
+## Architecture
+
+### Startup chain (`cmd/sandbox-engine/main.go`)
+```
+config.Load() (env vars)
+→ storage.MigrateFromDSN() (auto-migrate on startup)
+→ storage.NewPostgresRepository() (pgx pool)
+→ services.NewRegistry() + Register("postgres"|"redis")
+→ templates.NewLoader().LoadFromDir()
+→ sandbox.NewManager() (Docker client + all deps)
+→ cleanup.NewCleaner().Start() (background TTL reaper)
+→ api.NewServer() → http.ListenAndServe(:8080)
+```
+
+### Two access patterns
+
+1. **Direct sandbox** (legacy): `POST /api/v1/sandboxes` → container created immediately → WebSocket terminal at `/api/v1/ws/terminal/{id}?token=API_KEY`
+
+2. **Lazy session** (primary): `POST /api/v1/sessions` → no container yet → candidate opens `/join/{token}` → clicks Start → `POST /api/v1/join/{token}/activate` → container provisions → WebSocket at `/api/v1/ws/session-terminal/{id}?session_token=TOKEN`
+
+### Session lifecycle
+```
+ready → provisioning → active → expired
+  └──────────────────→ failed
+```
+- `ready`: created by admin, no container
+- `provisioning`: candidate clicked Start, sandbox spinning up (background goroutine polls up to 30s)
+- `active`: container running, TTL started from activation time
+- `ActivateSession` is idempotent — re-calling returns current state without duplicate containers
+
+### Key packages
+
+| Package | Role |
+|---------|------|
+| `internal/api/` | Chi router, handlers, auth middleware, WebSocket terminal proxy |
+| `internal/sandbox/` | `Manager` interface + `DockerManager` — container CRUD, session CRUD, async provisioning |
+| `internal/storage/` | `Repository` interface + PostgreSQL impl (pgx), auto-migrations |
+| `internal/services/` | `Provider` interface + postgres/redis providers — per-sandbox DB/keyspace isolation |
+| `internal/templates/` | YAML template loader from `TEMPLATES_DIR` |
+| `internal/cleanup/` | Background worker deletes expired sandboxes on interval |
+| `internal/models/` | Domain types: Sandbox, Session, Template, ApiClient |
+
+### Web UI (`web/`)
+
+React 19 + Vite 6 + Tailwind + xterm.js + Framer Motion + react-router-dom
+
+Routes:
+- `/join/:token` → `JoinPage` (welcome → provisioning animation → workspace)
+- `/*` → `WorkspaceRoute` (legacy: `?sandbox=ID&token=API_KEY`)
+
+### Workspace Docker images (`docker/workspace/`)
+
+Multi-layer:
+- `Dockerfile.base` — debian:bookworm-slim + Node.js 20 + Claude Code CLI + `coder` user (uid 1000)
+- `Dockerfile.python` — extends base + Python 3.12 + poetry/ruff/pytest
+- `Dockerfile.node`, `Dockerfile.go` — language variants
+- `entrypoint.sh` — restores Claude auth from volume, fixes permissions
+
+Claude Code auth mounted via Docker volume `claude-auth:/home/coder/.claude` (in `manager.go:createContainer`).
+
+## Authentication
+
+- **Admin API**: `Authorization: Bearer sk_...` or `X-API-Key` header → `api_clients` table → permissions (`sandboxes:read/write`, `sessions:read/write`, `templates:read`)
+- **WebSocket (admin)**: `?token=API_KEY` query param
+- **Join endpoints** (`/join/{token}`, `/ws/session-terminal/{id}`): public, session token (48-char hex) is the auth
+
+## Environment Variables
+
+All have defaults (see `internal/config/config.go`):
+- `DATABASE_DSN` — PostgreSQL connection string
+- `REDIS_ADDRESS`, `REDIS_PASSWORD`
+- `DOCKER_HOST` — Docker socket (`npipe:////./pipe/dockerDesktopLinuxEngine` on Windows)
+- `DOCKER_NETWORK` — network for containers (default: `sandbox-network`)
+- `DOCKER_PULL_POLICY` — `if-not-present` | `never` | `always`
+- `TRAEFIK_ENABLED` — generate Traefik labels on containers
+- `SANDBOX_DOMAIN` — domain for routing (e.g., `terra-sandbox.ru`)
+- `TEMPLATES_DIR` — path to YAML templates
+- `CLEANUP_INTERVAL` — TTL cleanup frequency (default: `5m`)
+
+## Dev services
+
+`make services-up` runs `docker/services/docker-compose.yml`:
+- PostgreSQL 16 (`:5432`, user: `sandbox`, pass: `sandbox_secret`, db: `sandbox_engine`)
+- Redis 7 (`:6379`, pass: `redis_secret`)
+- Traefik v3 (`:80/:443`, dashboard `:8081`)
+
+## Deployment
+
+Production on Netcup via `deploy/docker-compose.prod.yml` + nginx (`deploy/nginx/`).
+Domains: `terra-sandbox.ru` (UI), `api.terra-sandbox.ru` (API).
 
 ```bash
-# В контейнере sandbox
-docker exec -u coder sandbox-<id> cat ~/.claude.json | grep hasCompletedOnboarding
-docker exec -u coder sandbox-<id> ls -la ~/.claude/
+ssh terra@$(doppler secrets get NETCUP_IP --project servers --config dev --plain)
+cd /var/www/sandbox-engine
+docker compose -f deploy/docker-compose.prod.yml logs -f sandbox-engine
 ```
 
-### Очистка старых sandbox-ов
+## Common pitfalls
 
-```bash
-# Cleanup job запускается автоматически
-# Или вручную:
-docker ps --filter 'name=sandbox-' --format '{{.Names}}'
-docker rm -f sandbox-<id>
-```
+- **CRLF on Windows**: Scripts in `docker/workspace/` must have LF endings. CRLF causes `exec format error` in Linux containers.
+- **Background goroutines**: Provisioning runs async. Never use `r.Context()` — use `context.Background()` (request context cancels when response is sent).
+- **Docker on Windows**: Use `DOCKER_HOST=npipe:////./pipe/dockerDesktopLinuxEngine`.
+- **Workspace image FROM**: `Dockerfile.python` references `ghcr.io/terra-clan/sandbox-engine/workspace-base:latest`. For local dev, tag your build: `docker tag workspace-base:latest ghcr.io/terra-clan/sandbox-engine/workspace-base:latest`.

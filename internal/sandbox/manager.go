@@ -29,6 +29,8 @@ var (
 	ErrTemplateNotFound = errors.New("template not found")
 	ErrSandboxExpired   = errors.New("sandbox has expired")
 	ErrSandboxStopped   = errors.New("sandbox is already stopped")
+	ErrSessionNotFound  = errors.New("session not found")
+	ErrSessionNotReady  = errors.New("session is not in ready state")
 )
 
 // Manager defines the interface for sandbox management
@@ -45,6 +47,14 @@ type Manager interface {
 	Ping(ctx context.Context) error
 	GetExpired(ctx context.Context) ([]*models.Sandbox, error)
 	Close() error
+
+	// Sessions
+	CreateSession(ctx context.Context, req models.CreateSessionRequest, createdBy string) (*models.Session, error)
+	GetSessionByToken(ctx context.Context, token string) (*models.Session, error)
+	GetSessionByID(ctx context.Context, id string) (*models.Session, error)
+	ActivateSession(ctx context.Context, token string) (*models.Session, error)
+	DeleteSession(ctx context.Context, id string) error
+	ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error)
 }
 
 // CreateOptions holds optional parameters for sandbox creation
@@ -660,4 +670,196 @@ func (m *DockerManager) ExecResize(ctx context.Context, execID string, height, w
 		Height: height,
 		Width:  width,
 	})
+}
+
+// --- Sessions ---
+
+// CreateSession creates a deferred sandbox session (no container yet)
+func (m *DockerManager) CreateSession(ctx context.Context, req models.CreateSessionRequest, createdBy string) (*models.Session, error) {
+	// Validate template exists
+	tmpl := m.templateLoader.Get(req.TemplateID)
+	if tmpl == nil {
+		return nil, ErrTemplateNotFound
+	}
+
+	token, err := models.GenerateSessionToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session token: %w", err)
+	}
+
+	ttl := req.TTL
+	if ttl == 0 {
+		ttl = int(tmpl.TTL.Seconds())
+	}
+	if ttl == 0 {
+		ttl = 3600 // 1 hour default
+	}
+
+	id := uuid.New().String()
+
+	session := &models.Session{
+		ID:         id,
+		Token:      token,
+		TemplateID: req.TemplateID,
+		Status:     models.SessionReady,
+		Env:        req.Env,
+		Metadata:   req.Metadata,
+		TTLSeconds: ttl,
+		CreatedAt:  time.Now(),
+		CreatedBy:  createdBy,
+	}
+
+	if session.Env == nil {
+		session.Env = make(map[string]string)
+	}
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]string)
+	}
+
+	if err := m.repo.CreateSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	slog.Info("session created", "id", id, "template", req.TemplateID, "ttl", ttl)
+	return session, nil
+}
+
+// GetSessionByToken retrieves a session by its join token
+func (m *DockerManager) GetSessionByToken(ctx context.Context, token string) (*models.Session, error) {
+	session, err := m.repo.GetSessionByToken(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	if session == nil {
+		return nil, ErrSessionNotFound
+	}
+	return session, nil
+}
+
+// GetSessionByID retrieves a session by ID
+func (m *DockerManager) GetSessionByID(ctx context.Context, id string) (*models.Session, error) {
+	session, err := m.repo.GetSessionByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	if session == nil {
+		return nil, ErrSessionNotFound
+	}
+	return session, nil
+}
+
+// ActivateSession triggers sandbox creation for a ready session
+func (m *DockerManager) ActivateSession(ctx context.Context, token string) (*models.Session, error) {
+	session, err := m.repo.GetSessionByToken(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	if session == nil {
+		return nil, ErrSessionNotFound
+	}
+
+	if !session.IsActivatable() {
+		// Already activated or failed — return current state
+		return session, nil
+	}
+
+	// Transition to provisioning
+	session.Status = models.SessionProvisioning
+	now := time.Now()
+	session.ActivatedAt = &now
+	expiresAt := now.Add(time.Duration(session.TTLSeconds) * time.Second)
+	session.ExpiresAt = &expiresAt
+
+	if err := m.repo.UpdateSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("failed to update session: %w", err)
+	}
+
+	// Create sandbox in background
+	go m.provisionSessionSandbox(context.Background(), session)
+
+	slog.Info("session activated", "id", session.ID, "token", session.Token)
+	return session, nil
+}
+
+// provisionSessionSandbox creates a sandbox for an activated session
+func (m *DockerManager) provisionSessionSandbox(ctx context.Context, session *models.Session) {
+	ttl := time.Duration(session.TTLSeconds) * time.Second
+
+	sb, err := m.Create(ctx, session.TemplateID, session.CreatedBy, CreateOptions{
+		TTL:      &ttl,
+		Env:      session.Env,
+		Metadata: session.Metadata,
+	})
+
+	if err != nil {
+		slog.Error("failed to create sandbox for session", "error", err, "session_id", session.ID)
+		session.Status = models.SessionFailed
+		session.StatusMessage = fmt.Sprintf("failed to create sandbox: %v", err)
+		m.repo.UpdateSession(ctx, session)
+		return
+	}
+
+	session.SandboxID = sb.ID
+	m.repo.UpdateSession(ctx, session)
+
+	// Wait for sandbox to become running
+	for i := 0; i < 30; i++ {
+		time.Sleep(1 * time.Second)
+
+		sb, err = m.repo.GetSandbox(ctx, sb.ID)
+		if err != nil || sb == nil {
+			continue
+		}
+
+		if sb.Status == models.StatusRunning {
+			session.Status = models.SessionActive
+			m.repo.UpdateSession(ctx, session)
+			slog.Info("session sandbox ready", "session_id", session.ID, "sandbox_id", sb.ID)
+			return
+		}
+
+		if sb.Status == models.StatusFailed {
+			session.Status = models.SessionFailed
+			session.StatusMessage = sb.StatusMsg
+			m.repo.UpdateSession(ctx, session)
+			slog.Error("session sandbox failed", "session_id", session.ID, "sandbox_id", sb.ID)
+			return
+		}
+	}
+
+	// Timeout
+	session.Status = models.SessionFailed
+	session.StatusMessage = "sandbox provisioning timed out"
+	m.repo.UpdateSession(ctx, session)
+	slog.Error("session sandbox timed out", "session_id", session.ID)
+}
+
+// DeleteSession deletes a session and its sandbox if exists
+func (m *DockerManager) DeleteSession(ctx context.Context, id string) error {
+	session, err := m.repo.GetSessionByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+	if session == nil {
+		return ErrSessionNotFound
+	}
+
+	// Delete sandbox if it was created
+	if session.SandboxID != "" {
+		if err := m.Delete(ctx, session.SandboxID); err != nil {
+			slog.Warn("failed to delete session sandbox", "error", err, "sandbox_id", session.SandboxID)
+		}
+	}
+
+	if err := m.repo.DeleteSession(ctx, id); err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+
+	slog.Info("session deleted", "id", id)
+	return nil
+}
+
+// ListSessions returns sessions matching filters
+func (m *DockerManager) ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error) {
+	return m.repo.ListSessions(ctx, status, limit, offset)
 }

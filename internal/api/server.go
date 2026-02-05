@@ -73,34 +73,59 @@ func (s *Server) setupRouter() {
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Apply authentication middleware to all /api/v1/* routes
-		r.Use(s.authMiddleware.Authenticate)
+		// --- Public routes (no API key required) ---
 
-		// WebSocket terminal - NO timeout (needs long-lived connections)
-		r.Get("/ws/terminal/{id}", s.handleTerminalWS)
-
-		// REST API routes - with timeout
-		r.Group(func(r chi.Router) {
+		// Join endpoints — session token is the auth
+		r.Route("/join/{token}", func(r chi.Router) {
 			r.Use(middleware.Timeout(60 * time.Second))
+			r.Get("/", s.handleJoinSession)
+			r.Post("/activate", s.handleActivateSession)
+		})
 
-			// Sandboxes
-			r.Route("/sandboxes", func(r chi.Router) {
-				r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleListSandboxes)
-				r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/", s.handleCreateSandbox)
+		// WebSocket terminal with session token auth (public)
+		r.Get("/ws/session-terminal/{id}", s.handleSessionTerminalWS)
 
-				r.Route("/{id}", func(r chi.Router) {
-					r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleGetSandbox)
-					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Delete("/", s.handleDeleteSandbox)
-					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/extend", s.handleExtendTTL)
-					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/stop", s.handleStopSandbox)
-					r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/logs", s.handleGetLogs)
+		// --- Authenticated routes (API key required) ---
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware.Authenticate)
+
+			// WebSocket terminal - NO timeout (needs long-lived connections)
+			r.Get("/ws/terminal/{id}", s.handleTerminalWS)
+
+			// REST API routes - with timeout
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.Timeout(60 * time.Second))
+
+				// Sandboxes
+				r.Route("/sandboxes", func(r chi.Router) {
+					r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleListSandboxes)
+					r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/", s.handleCreateSandbox)
+
+					r.Route("/{id}", func(r chi.Router) {
+						r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/", s.handleGetSandbox)
+						r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Delete("/", s.handleDeleteSandbox)
+						r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/extend", s.handleExtendTTL)
+						r.With(s.authMiddleware.RequirePermission("sandboxes:write")).Post("/stop", s.handleStopSandbox)
+						r.With(s.authMiddleware.RequirePermission("sandboxes:read")).Get("/logs", s.handleGetLogs)
+					})
 				})
-			})
 
-			// Templates
-			r.Route("/templates", func(r chi.Router) {
-				r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)
-				r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/{name}", s.handleGetTemplate)
+				// Sessions (admin management)
+				r.Route("/sessions", func(r chi.Router) {
+					r.With(s.authMiddleware.RequirePermission("sessions:read")).Get("/", s.handleListSessions)
+					r.With(s.authMiddleware.RequirePermission("sessions:write")).Post("/", s.handleCreateSession)
+
+					r.Route("/{id}", func(r chi.Router) {
+						r.With(s.authMiddleware.RequirePermission("sessions:read")).Get("/", s.handleGetSession)
+						r.With(s.authMiddleware.RequirePermission("sessions:write")).Delete("/", s.handleDeleteSession)
+					})
+				})
+
+				// Templates
+				r.Route("/templates", func(r chi.Router) {
+					r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)
+					r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/{name}", s.handleGetTemplate)
+				})
 			})
 		})
 	})
@@ -116,7 +141,7 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 
 		defer func() {
 			// Skip noisy logging for WebSocket and health checks
-			if strings.Contains(r.URL.Path, "/ws/") || r.URL.Path == "/health" {
+			if strings.Contains(r.URL.Path, "/ws/") || r.URL.Path == "/health" || r.URL.Path == "/ready" {
 				return
 			}
 			slog.Info("http request",

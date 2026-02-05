@@ -11,6 +11,7 @@ interface WorkspaceProps {
   sandbox: SandboxInfo | null;
   sandboxId: string;
   apiToken: string;
+  sessionToken?: string;
   apiBaseUrl: string;
   wsBaseUrl: string;
   loading: boolean;
@@ -21,6 +22,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   sandbox,
   sandboxId,
   apiToken,
+  sessionToken,
   wsBaseUrl,
   loading,
   error
@@ -126,6 +128,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             <Terminal
               sandboxId={sandboxId}
               apiToken={apiToken}
+              sessionToken={sessionToken}
               wsBaseUrl={wsBaseUrl}
             />
           ) : (
