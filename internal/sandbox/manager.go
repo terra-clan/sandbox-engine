@@ -63,6 +63,7 @@ type CreateOptions struct {
 	TTL      *time.Duration
 	Env      map[string]string
 	Metadata map[string]string
+	Services []string // Override template services; if empty, uses template's list
 }
 
 // DockerManager implements Manager using Docker
@@ -154,13 +155,20 @@ func (m *DockerManager) Create(ctx context.Context, templateID, userID string, o
 		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
 
+	// Determine which services to provision: session override > template default
+	serviceList := tmpl.Services
+	if len(opts.Services) > 0 {
+		serviceList = opts.Services
+	}
+
 	// Provision services asynchronously
-	go m.provisionSandbox(context.Background(), sb, tmpl, opts.Env)
+	go m.provisionSandbox(context.Background(), sb, tmpl, opts.Env, serviceList)
 
 	slog.Info("sandbox created",
 		"id", id,
 		"template", templateID,
 		"user", userID,
+		"services", serviceList,
 		"expires_at", sb.ExpiresAt,
 	)
 
@@ -168,9 +176,9 @@ func (m *DockerManager) Create(ctx context.Context, templateID, userID string, o
 }
 
 // provisionSandbox handles async provisioning of sandbox resources
-func (m *DockerManager) provisionSandbox(ctx context.Context, sb *models.Sandbox, tmpl *models.Template, extraEnv map[string]string) {
+func (m *DockerManager) provisionSandbox(ctx context.Context, sb *models.Sandbox, tmpl *models.Template, extraEnv map[string]string, serviceList []string) {
 	// Provision required services
-	for _, serviceName := range tmpl.Services {
+	for _, serviceName := range serviceList {
 		provider := m.serviceRegistry.Get(serviceName)
 		if provider == nil {
 			m.updateStatus(ctx, sb.ID, models.StatusFailed, fmt.Sprintf("unknown service: %s", serviceName))
@@ -705,6 +713,7 @@ func (m *DockerManager) CreateSession(ctx context.Context, req models.CreateSess
 		Status:          models.SessionReady,
 		Env:             req.Env,
 		Metadata:        req.Metadata,
+		Services:        req.Services,
 		TTLSeconds:      ttl,
 		TaskDescription: req.TaskDescription,
 		CreatedAt:       time.Now(),
@@ -791,6 +800,7 @@ func (m *DockerManager) provisionSessionSandbox(ctx context.Context, session *mo
 		TTL:      &ttl,
 		Env:      session.Env,
 		Metadata: session.Metadata,
+		Services: session.Services,
 	})
 
 	if err != nil {

@@ -178,12 +178,27 @@ func (s *Server) handleJoinSession(w http.ResponseWriter, r *http.Request) {
 	if session.Status == models.SessionActive && session.SandboxID != "" {
 		sb, err := s.sandboxManager.Get(r.Context(), session.SandboxID)
 		if err == nil {
-			resp.Sandbox = &models.SandboxInfo{
+			sbInfo := &models.SandboxInfo{
 				ID:        sb.ID,
 				Status:    string(sb.Status),
 				Endpoints: sb.Endpoints,
 				ExpiresAt: session.ExpiresAt,
 			}
+
+			// Add service info from sandbox
+			for _, svc := range sb.Services {
+				si := &models.ServiceInfo{
+					Name:   svc.Name,
+					Type:   svc.Type,
+					Status: svc.Status,
+				}
+				if svc.Credentials != nil {
+					si.Port = svc.Credentials.Port
+				}
+				sbInfo.Services = append(sbInfo.Services, si)
+			}
+
+			resp.Sandbox = sbInfo
 		}
 	}
 
