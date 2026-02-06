@@ -1,0 +1,22 @@
+code: limit-orders
+title: "Реализация лимитных ордеров"
+description: |
+  Реализуйте движок матчинга лимитных ордеров для торговой платформы.
+
+  Движок должен поддерживать:
+  - Buy/Sell лимитные ордера с приоритетом цена-время
+  - Частичное исполнение ордеров
+  - Order book с bid/ask уровнями
+  - REST API для размещения и отмены ордеров
+  - WebSocket для стриминга обновлений order book
+
+  Стартовый проект с FastAPI уже развёрнут в /workspace.
+difficulty: hard
+required_level: senior
+time_limit: 7200
+skills:
+  - python
+  - fastapi
+  - algorithms
+  - data-structures
+  - websockets

@@ -1,0 +1,22 @@
+code: order-service
+title: "Сервис заказов"
+description: |
+  Реализуйте сервис управления заказами для интернет-магазина.
+
+  Требования:
+  - REST API для создания заказа из корзины
+  - Статусная модель: created → paid → shipped → delivered / cancelled
+  - Валидация наличия товаров перед созданием заказа
+  - Расчёт стоимости доставки по весу и зоне
+  - История изменений статуса заказа (audit log)
+
+  FastAPI проект уже развёрнут в /workspace.
+difficulty: hard
+required_level: senior
+time_limit: 7200
+skills:
+  - python
+  - fastapi
+  - sql
+  - rest-api
+  - state-machine

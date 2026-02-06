@@ -1,0 +1,21 @@
+code: transaction-history
+title: "API истории транзакций"
+description: |
+  Создайте сервис для хранения и запроса истории транзакций.
+
+  Требования:
+  - REST API для записи и получения транзакций
+  - Фильтрация по дате, типу, статусу, сумме
+  - Пагинация с курсором (cursor-based pagination)
+  - Агрегация: сумма за период, количество по статусам
+  - Индексы в PostgreSQL для быстрых запросов
+
+  База данных PostgreSQL уже доступна.
+difficulty: medium
+required_level: middle
+time_limit: 5400
+skills:
+  - go
+  - rest-api
+  - sql
+  - pagination

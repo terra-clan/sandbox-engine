@@ -1,0 +1,21 @@
+code: portfolio-api
+title: "REST API для управления портфелем"
+description: |
+  Создайте REST API для управления инвестиционным портфелем.
+
+  Требования:
+  - CRUD для позиций (тикер, количество, цена входа)
+  - Расчёт P&L (profit/loss) по текущим ценам
+  - Группировка по секторам и валютам
+  - Endpoint для получения сводки портфеля
+  - Валидация входных данных (Pydantic)
+
+  База данных PostgreSQL уже доступна через переменные окружения.
+difficulty: medium
+required_level: middle
+time_limit: 5400
+skills:
+  - python
+  - fastapi
+  - sql
+  - rest-api
