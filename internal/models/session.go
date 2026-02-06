@@ -27,9 +27,10 @@ type Session struct {
 	StatusMessage string            `json:"status_message,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
-	TTLSeconds    int               `json:"ttl_seconds"`
-	SandboxID     string            `json:"sandbox_id,omitempty"`
-	CreatedAt     time.Time         `json:"created_at"`
+	TTLSeconds      int               `json:"ttl_seconds"`
+	SandboxID       string            `json:"sandbox_id,omitempty"`
+	TaskDescription string            `json:"task_description"`
+	CreatedAt       time.Time         `json:"created_at"`
 	ActivatedAt   *time.Time        `json:"activated_at,omitempty"`
 	ExpiresAt     *time.Time        `json:"expires_at,omitempty"`
 	CreatedBy     string            `json:"created_by,omitempty"`
@@ -76,10 +77,11 @@ func GenerateSessionToken() (string, error) {
 
 // CreateSessionRequest represents a request to create a session
 type CreateSessionRequest struct {
-	TemplateID string            `json:"template_id"`
-	TTL        int               `json:"ttl"`                 // seconds
-	Env        map[string]string `json:"env,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	TemplateID      string            `json:"template_id"`
+	TTL             int               `json:"ttl"`                          // seconds
+	Env             map[string]string `json:"env,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	TaskDescription string            `json:"task_description,omitempty"`
 }
 
 // CreateSessionResponse is returned after creating a session
@@ -94,10 +96,11 @@ type CreateSessionResponse struct {
 
 // JoinSessionResponse is returned for public join endpoint
 type JoinSessionResponse struct {
-	Status   SessionStatus     `json:"status"`
-	Template *TemplateInfo     `json:"template,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-	Sandbox  *SandboxInfo      `json:"sandbox,omitempty"`
+	Status          SessionStatus     `json:"status"`
+	Template        *TemplateInfo     `json:"template,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	TaskDescription string            `json:"task_description,omitempty"`
+	Sandbox         *SandboxInfo      `json:"sandbox,omitempty"`
 }
 
 // TemplateInfo is a subset of template data for the join response

@@ -55,6 +55,7 @@ type Manager interface {
 	ActivateSession(ctx context.Context, token string) (*models.Session, error)
 	DeleteSession(ctx context.Context, id string) error
 	ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error)
+	GetExpiredSessions(ctx context.Context) ([]*models.Session, error)
 }
 
 // CreateOptions holds optional parameters for sandbox creation
@@ -698,15 +699,16 @@ func (m *DockerManager) CreateSession(ctx context.Context, req models.CreateSess
 	id := uuid.New().String()
 
 	session := &models.Session{
-		ID:         id,
-		Token:      token,
-		TemplateID: req.TemplateID,
-		Status:     models.SessionReady,
-		Env:        req.Env,
-		Metadata:   req.Metadata,
-		TTLSeconds: ttl,
-		CreatedAt:  time.Now(),
-		CreatedBy:  createdBy,
+		ID:              id,
+		Token:           token,
+		TemplateID:      req.TemplateID,
+		Status:          models.SessionReady,
+		Env:             req.Env,
+		Metadata:        req.Metadata,
+		TTLSeconds:      ttl,
+		TaskDescription: req.TaskDescription,
+		CreatedAt:       time.Now(),
+		CreatedBy:       createdBy,
 	}
 
 	if session.Env == nil {
@@ -862,4 +864,13 @@ func (m *DockerManager) DeleteSession(ctx context.Context, id string) error {
 // ListSessions returns sessions matching filters
 func (m *DockerManager) ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error) {
 	return m.repo.ListSessions(ctx, status, limit, offset)
+}
+
+// GetExpiredSessions returns all active sessions past their TTL
+func (m *DockerManager) GetExpiredSessions(ctx context.Context) ([]*models.Session, error) {
+	sessions, err := m.repo.GetExpiredSessions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get expired sessions: %w", err)
+	}
+	return sessions, nil
 }

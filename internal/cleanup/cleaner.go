@@ -52,10 +52,16 @@ func (c *Cleaner) run(ctx context.Context) {
 	}
 }
 
-// cleanup finds and removes expired sandboxes
+// cleanup finds and removes expired sandboxes and sessions
 func (c *Cleaner) cleanup(ctx context.Context) {
 	slog.Debug("running cleanup cycle")
 
+	c.cleanupSandboxes(ctx)
+	c.cleanupSessions(ctx)
+}
+
+// cleanupSandboxes finds and removes expired sandboxes
+func (c *Cleaner) cleanupSandboxes(ctx context.Context) {
 	expired, err := c.manager.GetExpired(ctx)
 	if err != nil {
 		slog.Error("failed to get expired sandboxes", "error", err)
@@ -86,5 +92,27 @@ func (c *Cleaner) cleanup(ctx context.Context) {
 		}
 
 		slog.Info("expired sandbox deleted", "id", sb.ID)
+	}
+}
+
+// cleanupSessions finds and expires active sessions past their TTL
+func (c *Cleaner) cleanupSessions(ctx context.Context) {
+	expiredSessions, err := c.manager.GetExpiredSessions(ctx)
+	if err != nil {
+		slog.Error("failed to get expired sessions", "error", err)
+		return
+	}
+
+	for _, session := range expiredSessions {
+		slog.Info("expiring session", "session_id", session.ID)
+
+		// Delete session (which also cleans up its sandbox)
+		if err := c.manager.DeleteSession(ctx, session.ID); err != nil {
+			slog.Error("failed to expire session", "session_id", session.ID, "error", err)
+		}
+	}
+
+	if len(expiredSessions) > 0 {
+		slog.Info("expired sessions cleaned up", "count", len(expiredSessions))
 	}
 }
