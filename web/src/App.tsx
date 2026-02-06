@@ -56,9 +56,12 @@ const resolveBaseUrls = () => {
   const wsProto = proto === 'https' ? 'wss' : 'ws';
   const host = window.location.host;
 
+  // In production, API is on api.terra-sandbox.ru while UI is on terra-sandbox.ru
+  const apiHost = host === 'terra-sandbox.ru' ? 'api.terra-sandbox.ru' : host;
+
   return {
-    apiBaseUrl: params.get('api') || `${proto}://${host}`,
-    wsBaseUrl: params.get('ws') || `${wsProto}://${host}`,
+    apiBaseUrl: params.get('api') || `${proto}://${apiHost}`,
+    wsBaseUrl: params.get('ws') || `${wsProto}://${apiHost}`,
   };
 };
 
