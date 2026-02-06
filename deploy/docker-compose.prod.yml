@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-sandbox_engine}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
     networks:
       - sandbox-network
     healthcheck:
@@ -135,6 +136,80 @@ services:
       - "traefik.http.routers.sandbox-web.rule=Host(`terra-sandbox.ru`) || Host(`www.terra-sandbox.ru`)"
       - "traefik.http.routers.sandbox-web.entrypoints=web"
       - "traefik.http.services.sandbox-web.loadbalancer.server.port=80"
+
+  # Proxy API (Node.js/TypeScript)
+  proxy-api:
+    container_name: proxy-api
+    build:
+      context: ../../proxy-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - sandbox-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-sandbox}:${POSTGRES_PASSWORD}@postgres:5432/proxy_api
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME:-default}
+      - LOG_LEVEL=info
+      - NODE_ENV=production
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.proxy-api.rule=Host(`proxy.${SANDBOX_DOMAIN:-terra-sandbox.ru}`)"
+      - "traefik.http.routers.proxy-api.entrypoints=web"
+      - "traefik.http.services.proxy-api.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Assessment Service (Go)
+  assessment-service:
+    container_name: assessment-service
+    build:
+      context: ../../assessment-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - sandbox-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      proxy-api:
+        condition: service_healthy
+      sandbox-engine:
+        condition: service_healthy
+    environment:
+      - SERVER_ADDR=:8081
+      - DATABASE_DSN=postgresql://${POSTGRES_USER:-sandbox}:${POSTGRES_PASSWORD}@postgres:5432/assessment_service?sslmode=disable
+      - SANDBOX_ENGINE_URL=http://sandbox-engine:8080
+      - SANDBOX_ENGINE_API_KEY=${SANDBOX_ENGINE_API_KEY:-}
+      - PROXY_API_URL=http://proxy-api:3000
+      - PROXY_API_ADMIN_KEY=${PROXY_API_ADMIN_KEY:-}
+      - DOMAINS_PATH=/app/domains
+      - BASE_ACCESS_URL=https://${SANDBOX_DOMAIN:-terra-sandbox.ru}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.assessment.rule=Host(`assessment.${SANDBOX_DOMAIN:-terra-sandbox.ru}`)"
+      - "traefik.http.routers.assessment.entrypoints=web"
+      - "traefik.http.services.assessment.loadbalancer.server.port=8081"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   sandbox-network:

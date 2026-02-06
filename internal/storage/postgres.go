@@ -618,8 +618,8 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, s *models.Sessio
 	}
 
 	query := `
-		INSERT INTO sessions (id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		INSERT INTO sessions (id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`
 
 	_, err = r.pool.Exec(ctx, query,
@@ -632,6 +632,7 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, s *models.Sessio
 		metadataJSON,
 		s.TTLSeconds,
 		nullString(s.SandboxID),
+		s.TaskDescription,
 		s.CreatedAt,
 		nullTime(s.ActivatedAt),
 		nullTime(s.ExpiresAt),
@@ -657,7 +658,7 @@ func (r *PostgresRepository) GetSessionByID(ctx context.Context, id string) (*mo
 
 func (r *PostgresRepository) getSession(ctx context.Context, field, value string) (*models.Session, error) {
 	query := fmt.Sprintf(`
-		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by
+		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
 		FROM sessions
 		WHERE %s = $1
 	`, field)
@@ -678,6 +679,7 @@ func (r *PostgresRepository) getSession(ctx context.Context, field, value string
 		&metadataJSON,
 		&s.TTLSeconds,
 		&sandboxID,
+		&s.TaskDescription,
 		&s.CreatedAt,
 		&activatedAt,
 		&expiresAt,
@@ -732,7 +734,7 @@ func (r *PostgresRepository) UpdateSession(ctx context.Context, s *models.Sessio
 
 	query := `
 		UPDATE sessions
-		SET status = $2, status_message = $3, sandbox_id = $4, activated_at = $5, expires_at = $6, env = $7, metadata = $8
+		SET status = $2, status_message = $3, sandbox_id = $4, activated_at = $5, expires_at = $6, env = $7, metadata = $8, task_description = $9
 		WHERE id = $1
 	`
 
@@ -745,6 +747,7 @@ func (r *PostgresRepository) UpdateSession(ctx context.Context, s *models.Sessio
 		nullTime(s.ExpiresAt),
 		envJSON,
 		metadataJSON,
+		s.TaskDescription,
 	)
 
 	if err != nil {
@@ -777,7 +780,7 @@ func (r *PostgresRepository) DeleteSession(ctx context.Context, id string) error
 // ListSessions returns sessions with optional status filter
 func (r *PostgresRepository) ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error) {
 	query := `
-		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by
+		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
 		FROM sessions
 		WHERE 1=1
 	`
@@ -828,6 +831,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, status string, li
 			&metadataJSON,
 			&s.TTLSeconds,
 			&sandboxID,
+			&s.TaskDescription,
 			&s.CreatedAt,
 			&activatedAt,
 			&expiresAt,
@@ -865,7 +869,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, status string, li
 // GetExpiredSessions returns active sessions that have expired
 func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.Session, error) {
 	query := `
-		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, created_at, activated_at, expires_at, created_by
+		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
 		FROM sessions
 		WHERE status = 'active'
 		  AND expires_at < NOW()
@@ -897,6 +901,7 @@ func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.
 			&metadataJSON,
 			&s.TTLSeconds,
 			&sandboxID,
+			&s.TaskDescription,
 			&s.CreatedAt,
 			&activatedAt,
 			&expiresAt,

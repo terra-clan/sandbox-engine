@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { FolderTree, Server, ChevronLeft, ChevronRight } from 'lucide-react';
+import { FolderTree, Server, ChevronLeft, ChevronRight, FileText, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Terminal } from '../components/Terminal';
 import { FileTree } from '../components/FileTree';
 import { FileViewerModal } from '../components/FileViewerModal';
@@ -16,6 +19,7 @@ interface WorkspaceProps {
   wsBaseUrl: string;
   loading: boolean;
   error: string | null;
+  taskDescription?: string;
 }
 
 export const Workspace: React.FC<WorkspaceProps> = ({
@@ -25,11 +29,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   sessionToken,
   wsBaseUrl,
   loading,
-  error
+  error,
+  taskDescription,
 }) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<'files' | 'services'>('files');
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [showTaskModal, setShowTaskModal] = useState(false);
 
   // Mock files for now - will be populated from API
   const [files] = useState<FileNode[]>([
@@ -100,6 +106,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({
                 >
                   <Server size={14} />
                 </button>
+                {taskDescription && (
+                  <button
+                    onClick={() => setShowTaskModal(true)}
+                    className="px-2 py-1 rounded text-xs transition-colors text-slate-400 hover:text-cyan-400 hover:bg-slate-700"
+                    title="Техническое задание"
+                  >
+                    <FileText size={14} />
+                  </button>
+                )}
               </div>
             )}
             <button
@@ -155,6 +170,57 @@ export const Workspace: React.FC<WorkspaceProps> = ({
 
       {/* File Viewer Modal */}
       <FileViewerModal file={selectedFile} onClose={() => setSelectedFile(null)} />
+
+      {/* Task description modal */}
+      <AnimatePresence>
+        {showTaskModal && taskDescription && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8"
+            onClick={() => setShowTaskModal(false)}
+          >
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-3xl max-h-[85vh] bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col"
+            >
+              {/* Header */}
+              <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-700 bg-slate-800">
+                <div className="flex items-center gap-2">
+                  <FileText size={16} className="text-cyan-400" />
+                  <span className="text-sm font-medium text-slate-200">Техническое задание</span>
+                </div>
+                <button
+                  onClick={() => setShowTaskModal(false)}
+                  className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="prose prose-invert prose-sm max-w-none
+                  prose-headings:text-slate-200 prose-p:text-slate-300
+                  prose-strong:text-white prose-code:text-cyan-400
+                  prose-code:bg-slate-700/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                  prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-700
+                  prose-li:text-slate-300 prose-a:text-cyan-400
+                  prose-table:text-slate-300 prose-th:text-slate-200 prose-td:border-slate-700 prose-th:border-slate-700">
+                  <Markdown remarkPlugins={[remarkGfm]}>{taskDescription}</Markdown>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

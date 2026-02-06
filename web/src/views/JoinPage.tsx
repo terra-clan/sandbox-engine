@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Loader2, Check, Terminal, Server, Clock } from 'lucide-react';
+import { Play, Loader2, Check, Terminal, Server, Clock, FileText, X } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Workspace } from './Workspace';
 import { SandboxInfo } from '../types';
 
 interface SessionInfo {
   status: 'ready' | 'provisioning' | 'active' | 'expired' | 'failed';
+  task_description?: string;
   template?: {
     name: string;
     description: string;
@@ -39,6 +42,7 @@ export const JoinPage: React.FC<JoinPageProps> = ({ token, apiBaseUrl, wsBaseUrl
   const [activating, setActivating] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
   const [showWorkspace, setShowWorkspace] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
 
   const fetchSession = useCallback(async () => {
     try {
@@ -130,6 +134,7 @@ export const JoinPage: React.FC<JoinPageProps> = ({ token, apiBaseUrl, wsBaseUrl
         wsBaseUrl={wsBaseUrl}
         loading={false}
         error={null}
+        taskDescription={session.task_description}
       />
     );
   }
@@ -175,7 +180,7 @@ export const JoinPage: React.FC<JoinPageProps> = ({ token, apiBaseUrl, wsBaseUrl
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.4 }}
-            className="max-w-lg w-full mx-4"
+            className="w-full mx-4 max-w-lg"
           >
             <div className="text-center mb-8">
               <motion.div
@@ -199,6 +204,20 @@ export const JoinPage: React.FC<JoinPageProps> = ({ token, apiBaseUrl, wsBaseUrl
                   {session.template.description && (
                     <div className="text-slate-400 text-sm mt-1">{session.template.description}</div>
                   )}
+                </div>
+              )}
+
+              {/* Task description button */}
+              {session.task_description && (
+                <div className="border-t border-slate-700 pt-4">
+                  <button
+                    onClick={() => setShowTaskModal(true)}
+                    className="w-full py-3 px-4 bg-slate-700/50 hover:bg-slate-700 border border-slate-600
+                      text-white rounded-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <FileText className="w-5 h-5 text-cyan-400" />
+                    Техническое задание
+                  </button>
                 </div>
               )}
 
@@ -375,6 +394,57 @@ export const JoinPage: React.FC<JoinPageProps> = ({ token, apiBaseUrl, wsBaseUrl
               <h2 className="text-xl font-bold text-white mb-2">Session Expired</h2>
               <p className="text-slate-400">This session has reached its time limit.</p>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Task description modal */}
+      <AnimatePresence>
+        {showTaskModal && session?.task_description && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8"
+            onClick={() => setShowTaskModal(false)}
+          >
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-3xl max-h-[85vh] bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col"
+            >
+              {/* Header */}
+              <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-700 bg-slate-800">
+                <div className="flex items-center gap-2">
+                  <FileText size={16} className="text-cyan-400" />
+                  <span className="text-sm font-medium text-slate-200">Техническое задание</span>
+                </div>
+                <button
+                  onClick={() => setShowTaskModal(false)}
+                  className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="prose prose-invert prose-sm max-w-none
+                  prose-headings:text-slate-200 prose-p:text-slate-300
+                  prose-strong:text-white prose-code:text-cyan-400
+                  prose-code:bg-slate-700/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+                  prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-700
+                  prose-li:text-slate-300 prose-a:text-cyan-400
+                  prose-table:text-slate-300 prose-th:text-slate-200 prose-td:border-slate-700 prose-th:border-slate-700">
+                  <Markdown remarkPlugins={[remarkGfm]}>{session.task_description}</Markdown>
+                </div>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

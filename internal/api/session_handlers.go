@@ -160,8 +160,9 @@ func (s *Server) handleJoinSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := models.JoinSessionResponse{
-		Status:   session.Status,
-		Metadata: session.Metadata,
+		Status:          session.Status,
+		Metadata:        session.Metadata,
+		TaskDescription: session.TaskDescription,
 	}
 
 	// Populate template info
