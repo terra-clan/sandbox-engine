@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -10,6 +10,10 @@ interface TerminalProps {
   wsBaseUrl?: string;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 10;
+const INITIAL_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 15000;
+
 export const Terminal: React.FC<TerminalProps> = ({
   sandboxId,
   apiToken,
@@ -20,10 +24,104 @@ export const Terminal: React.FC<TerminalProps> = ({
   const xtermRef = useRef<XTerm | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const reconnectAttempts = useRef(0);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unmountedRef = useRef(false);
+  const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'reconnecting'>('connecting');
+
+  const getWsUrl = useCallback(() => {
+    return sessionToken
+      ? `${wsBaseUrl}/api/v1/ws/session-terminal/${sandboxId}?session_token=${sessionToken}`
+      : `${wsBaseUrl}/api/v1/ws/terminal/${sandboxId}?token=${apiToken}`;
+  }, [sandboxId, apiToken, sessionToken, wsBaseUrl]);
+
+  const connect = useCallback((term: XTerm) => {
+    if (unmountedRef.current) return;
+
+    const wsUrl = getWsUrl();
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      if (unmountedRef.current) { ws.close(); return; }
+      reconnectAttempts.current = 0;
+      setStatus('connected');
+
+      if (reconnectAttempts.current === 0) {
+        term.writeln('\x1b[1;32m Connected to Terra Sandbox\x1b[0m');
+        term.writeln('');
+      } else {
+        term.writeln('\r\n\x1b[1;32m Reconnected\x1b[0m');
+      }
+
+      // Send terminal size
+      ws.send(JSON.stringify({
+        type: 'resize',
+        cols: term.cols,
+        rows: term.rows
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        switch (msg.type) {
+          case 'output':
+            term.write(msg.data);
+            break;
+          case 'connected':
+            console.log('Session connected:', msg.data);
+            break;
+          case 'exit':
+            term.writeln(`\r\n\x1b[1;31m Process exited with code ${msg.code}\x1b[0m`);
+            break;
+          case 'error':
+            term.writeln(`\r\n\x1b[1;31m Error: ${msg.data}\x1b[0m`);
+            break;
+        }
+      } catch {
+        term.write(event.data);
+      }
+    };
+
+    ws.onclose = (event) => {
+      if (unmountedRef.current) return;
+
+      // Don't reconnect on normal close (1000) or if explicitly closed
+      if (event.code === 1000) {
+        setStatus('disconnected');
+        term.writeln('\r\n\x1b[1;31m Disconnected\x1b[0m');
+        return;
+      }
+
+      if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
+        const delay = Math.min(
+          INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts.current),
+          MAX_RECONNECT_DELAY
+        );
+        reconnectAttempts.current++;
+        setStatus('reconnecting');
+        term.writeln(`\r\n\x1b[1;33m Connection lost. Reconnecting in ${Math.round(delay / 1000)}s... (${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})\x1b[0m`);
+
+        reconnectTimer.current = setTimeout(() => {
+          if (!unmountedRef.current) {
+            connect(term);
+          }
+        }, delay);
+      } else {
+        setStatus('disconnected');
+        term.writeln('\r\n\x1b[1;31m Disconnected. Max reconnect attempts reached. Refresh the page to try again.\x1b[0m');
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+  }, [getWsUrl]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    unmountedRef.current = false;
 
     // Create terminal with dark theme
     const term = new XTerm({
@@ -65,62 +163,13 @@ export const Terminal: React.FC<TerminalProps> = ({
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Connect to WebSocket — use session endpoint if sessionToken provided
-    const wsUrl = sessionToken
-      ? `${wsBaseUrl}/api/v1/ws/session-terminal/${sandboxId}?session_token=${sessionToken}`
-      : `${wsBaseUrl}/api/v1/ws/terminal/${sandboxId}?token=${apiToken}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setStatus('connected');
-      term.writeln('\x1b[1;32m Connected to Terra Sandbox\x1b[0m');
-      term.writeln('');
-
-      // Send terminal size
-      ws.send(JSON.stringify({
-        type: 'resize',
-        cols: term.cols,
-        rows: term.rows
-      }));
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-
-        switch (msg.type) {
-          case 'output':
-            term.write(msg.data);
-            break;
-          case 'connected':
-            console.log('Session connected:', msg.data);
-            break;
-          case 'exit':
-            term.writeln(`\r\n\x1b[1;31m Process exited with code ${msg.code}\x1b[0m`);
-            break;
-          case 'error':
-            term.writeln(`\r\n\x1b[1;31m Error: ${msg.data}\x1b[0m`);
-            break;
-        }
-      } catch {
-        term.write(event.data);
-      }
-    };
-
-    ws.onclose = () => {
-      setStatus('disconnected');
-      term.writeln('\r\n\x1b[1;31m Disconnected\x1b[0m');
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      term.writeln('\r\n\x1b[1;31m Connection error\x1b[0m');
-    };
+    // Connect WebSocket
+    connect(term);
 
     // Send input to server
     term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
@@ -130,22 +179,22 @@ export const Terminal: React.FC<TerminalProps> = ({
       // Handle Ctrl+V / Cmd+V for paste
       if ((event.ctrlKey || event.metaKey) && event.key === 'v' && event.type === 'keydown') {
         navigator.clipboard.readText().then((text) => {
-          if (ws.readyState === WebSocket.OPEN && text) {
+          const ws = wsRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN && text) {
             ws.send(JSON.stringify({ type: 'input', data: text }));
           }
         }).catch(err => {
           console.error('Failed to read clipboard:', err);
         });
-        return false; // Prevent default
+        return false;
       }
       // Handle Ctrl+C / Cmd+C for copy
       if ((event.ctrlKey || event.metaKey) && event.key === 'c' && event.type === 'keydown') {
         const selection = term.getSelection();
         if (selection) {
           navigator.clipboard.writeText(selection);
-          return false; // Prevent default
+          return false;
         }
-        // If no selection, send Ctrl+C to terminal
       }
       return true;
     });
@@ -153,7 +202,8 @@ export const Terminal: React.FC<TerminalProps> = ({
     // Resize handler
     const handleResize = () => {
       fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'resize',
           cols: term.cols,
@@ -164,27 +214,30 @@ export const Terminal: React.FC<TerminalProps> = ({
 
     window.addEventListener('resize', handleResize);
 
-    // ResizeObserver for container
     const resizeObserver = new ResizeObserver(() => {
       handleResize();
     });
     resizeObserver.observe(terminalRef.current);
 
-    // Focus terminal on click
     terminalRef.current.addEventListener('click', () => {
       term.focus();
     });
 
-    // Focus terminal initially
     setTimeout(() => term.focus(), 100);
 
     return () => {
+      unmountedRef.current = true;
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+      }
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
-      ws.close();
+      if (wsRef.current) {
+        wsRef.current.close(1000);
+      }
       term.dispose();
     };
-  }, [sandboxId, apiToken, sessionToken, wsBaseUrl]);
+  }, [sandboxId, apiToken, sessionToken, wsBaseUrl, connect]);
 
   return (
     <div className="h-full flex flex-col bg-slate-900 rounded-lg overflow-hidden border border-slate-700">
@@ -194,11 +247,13 @@ export const Terminal: React.FC<TerminalProps> = ({
           <div className={`w-2 h-2 rounded-full ${
             status === 'connected' ? 'bg-green-500' :
             status === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+            status === 'reconnecting' ? 'bg-yellow-500 animate-pulse' :
             'bg-red-500'
           }`} />
           <span className="text-xs text-slate-400 font-mono">
             {status === 'connected' ? 'Terminal' :
              status === 'connecting' ? 'Connecting...' :
+             status === 'reconnecting' ? 'Reconnecting...' :
              'Disconnected'}
           </span>
         </div>

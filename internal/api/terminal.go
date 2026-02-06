@@ -7,9 +7,19 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+)
+
+const (
+	// Time between ping messages to keep WebSocket alive (Cloudflare kills idle connections after ~100s)
+	pingInterval = 30 * time.Second
+	// Maximum time to wait for a pong response
+	pongTimeout = 10 * time.Second
+	// Write deadline for WebSocket messages
+	writeTimeout = 10 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -80,7 +90,39 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Set up pong handler — reset read deadline when pong received
+	conn.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+		return nil
+	})
+
+	var writeMu sync.Mutex
 	var wg sync.WaitGroup
+
+	// Ping goroutine — keeps connection alive through Cloudflare/nginx
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+				err := conn.WriteMessage(websocket.PingMessage, nil)
+				writeMu.Unlock()
+				if err != nil {
+					slog.Debug("ping failed", "sandbox_id", sandboxID, "error", err)
+					return
+				}
+			}
+		}
+	}()
 
 	// Read from container -> send to WebSocket
 	wg.Add(1)
@@ -101,10 +143,14 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if n > 0 {
-					if err := s.sendTerminalMessage(conn, TerminalMessage{
+					writeMu.Lock()
+					conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+					err := s.sendTerminalMessage(conn, TerminalMessage{
 						Type: "output",
 						Data: string(buf[:n]),
-					}); err != nil {
+					})
+					writeMu.Unlock()
+					if err != nil {
 						return
 					}
 				}
