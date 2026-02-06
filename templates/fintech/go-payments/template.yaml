@@ -1,0 +1,53 @@
+name: fintech-go
+description: "Fintech Payments Platform — Go environment"
+
+base_image: workspace-go:latest
+
+services:
+  - postgres
+  - redis
+
+resources:
+  cpu_limit: "2"
+  memory_limit: "4Gi"
+  cpu_request: "0.5"
+  memory_request: "512Mi"
+  disk_limit: "10Gi"
+
+env:
+  GO_ENV: development
+  CGO_ENABLED: "0"
+
+ttl: 4h
+
+expose:
+  - container: 8000
+    protocol: tcp
+    name: app
+    public: true
+
+  - container: 2345
+    protocol: tcp
+    name: debug
+    public: false
+
+volumes:
+  - name: workspace
+    mount_path: /workspace
+    read_only: false
+    size: "5Gi"
+
+  - name: gopath
+    mount_path: /home/coder/go
+    read_only: false
+    size: "2Gi"
+
+commands:
+  init: []
+  start: []
+  stop: []
+  healthcheck: "pgrep -x bash > /dev/null"
+
+labels:
+  category: backend
+  language: go

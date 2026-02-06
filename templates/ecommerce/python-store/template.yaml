@@ -1,0 +1,55 @@
+name: ecommerce-python
+description: "E-Commerce Platform — Python/FastAPI environment"
+
+base_image: workspace-python:latest
+
+services:
+  - postgres
+  - redis
+
+resources:
+  cpu_limit: "2"
+  memory_limit: "4Gi"
+  cpu_request: "0.5"
+  memory_request: "512Mi"
+  disk_limit: "10Gi"
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  ENVIRONMENT: sandbox
+
+ttl: 4h
+
+expose:
+  - container: 8000
+    protocol: tcp
+    name: api
+    public: true
+
+  - container: 5678
+    protocol: tcp
+    name: debug
+    public: false
+
+volumes:
+  - name: workspace
+    mount_path: /workspace
+    read_only: false
+    size: "5Gi"
+
+  - name: pip-cache
+    mount_path: /home/coder/.cache/pip
+    read_only: false
+    size: "1Gi"
+
+commands:
+  init: []
+  start: []
+  stop: []
+  healthcheck: "pgrep -x bash > /dev/null"
+
+labels:
+  category: backend
+  language: python
+  framework: fastapi

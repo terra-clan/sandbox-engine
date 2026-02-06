@@ -1,0 +1,21 @@
+code: payment-gateway
+title: "Платёжный шлюз"
+description: |
+  Реализуйте платёжный шлюз для обработки транзакций.
+
+  Требования:
+  - REST API для создания, подтверждения и отмены платежей
+  - Идемпотентность операций (повторный запрос не создаёт дубликат)
+  - Поддержка статусов: pending → processing → completed/failed
+  - Хранение истории транзакций в PostgreSQL
+  - Обработка конкурентных запросов (оптимистичная блокировка)
+
+  Проект на Go уже развёрнут в /workspace.
+difficulty: hard
+required_level: senior
+time_limit: 7200
+skills:
+  - go
+  - rest-api
+  - sql
+  - concurrency

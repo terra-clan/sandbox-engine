@@ -1,8 +1,11 @@
 package api
 
 import (
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -126,11 +129,95 @@ func (s *Server) setupRouter() {
 					r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleListTemplates)
 					r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/{name}", s.handleGetTemplate)
 				})
+
+				// Catalog (hierarchical: domains → projects → tasks)
+				r.Route("/catalog", func(r chi.Router) {
+					r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/domains", s.handleListDomains)
+
+					r.Route("/domains/{domainId}", func(r chi.Router) {
+						r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleGetDomain)
+						r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/projects", s.handleListProjects)
+
+						r.Route("/projects/{projectName}", func(r chi.Router) {
+							r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/", s.handleGetProject)
+							r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/tasks", s.handleListTasks)
+							r.With(s.authMiddleware.RequirePermission("templates:read")).Get("/tasks/{taskCode}", s.handleGetTask)
+						})
+					})
+				})
 			})
 		})
 	})
 
+	// Serve SPA from web/dist (if exists)
+	s.serveSPA(r)
+
 	s.router = r
+}
+
+// serveSPA serves the React SPA from web/dist directory.
+// For any request that doesn't match an API route and isn't a static file,
+// it serves index.html so React Router handles client-side routing.
+func (s *Server) serveSPA(r *chi.Mux) {
+	// Find web/dist relative to the executable or working directory
+	distPath := "web/dist"
+	if _, err := os.Stat(distPath); os.IsNotExist(err) {
+		// Try relative to executable
+		exe, _ := os.Executable()
+		distPath = filepath.Join(filepath.Dir(exe), "web", "dist")
+	}
+	if _, err := os.Stat(distPath); os.IsNotExist(err) {
+		slog.Warn("web/dist not found, SPA not served", "path", distPath)
+		return
+	}
+
+	slog.Info("serving SPA", "path", distPath)
+	distFS := os.DirFS(distPath)
+
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		// Try to serve the exact file first (JS, CSS, images, etc.)
+		cleanPath := strings.TrimPrefix(req.URL.Path, "/")
+		if cleanPath == "" {
+			cleanPath = "index.html"
+		}
+
+		if f, err := distFS.(fs.ReadFileFS).ReadFile(cleanPath); err == nil {
+			// Serve the static file with correct content type
+			contentType := "application/octet-stream"
+			switch {
+			case strings.HasSuffix(cleanPath, ".html"):
+				contentType = "text/html; charset=utf-8"
+			case strings.HasSuffix(cleanPath, ".js"):
+				contentType = "application/javascript"
+			case strings.HasSuffix(cleanPath, ".css"):
+				contentType = "text/css"
+			case strings.HasSuffix(cleanPath, ".svg"):
+				contentType = "image/svg+xml"
+			case strings.HasSuffix(cleanPath, ".png"):
+				contentType = "image/png"
+			case strings.HasSuffix(cleanPath, ".ico"):
+				contentType = "image/x-icon"
+			case strings.HasSuffix(cleanPath, ".json"):
+				contentType = "application/json"
+			case strings.HasSuffix(cleanPath, ".woff2"):
+				contentType = "font/woff2"
+			case strings.HasSuffix(cleanPath, ".woff"):
+				contentType = "font/woff"
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.Write(f)
+			return
+		}
+
+		// For any non-file path, serve index.html (SPA fallback)
+		indexHTML, err := fs.ReadFile(distFS, "index.html")
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
 }
 
 // loggingMiddleware logs HTTP requests using slog
