@@ -19,6 +19,12 @@ interface SessionInfo {
     id: string;
     status: string;
     endpoints?: Record<string, string>;
+    services?: Array<{
+      name: string;
+      type: string;
+      status: string;
+      port?: number;
+    }>;
     expires_at?: string;
   };
 }
@@ -120,7 +126,11 @@ export const JoinPage: React.FC<JoinPageProps> = ({ token, apiBaseUrl, wsBaseUrl
       status: 'running',
       createdAt: '',
       expiresAt: session.sandbox.expires_at || '',
-      services: [],
+      services: (session.sandbox.services || []).map(svc => ({
+        name: svc.name,
+        port: svc.port || 0,
+        status: svc.status === 'ready' ? 'running' as const : 'starting' as const,
+      })),
       workDir: '/workspace',
     };
 

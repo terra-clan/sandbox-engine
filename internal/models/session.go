@@ -27,6 +27,7 @@ type Session struct {
 	StatusMessage string            `json:"status_message,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
+	Services      []string          `json:"services,omitempty"`
 	TTLSeconds      int               `json:"ttl_seconds"`
 	SandboxID       string            `json:"sandbox_id,omitempty"`
 	TaskDescription string            `json:"task_description"`
@@ -81,6 +82,7 @@ type CreateSessionRequest struct {
 	TTL             int               `json:"ttl"`                          // seconds
 	Env             map[string]string `json:"env,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
+	Services        []string          `json:"services,omitempty"`
 	TaskDescription string            `json:"task_description,omitempty"`
 }
 
@@ -112,10 +114,19 @@ type TemplateInfo struct {
 
 // SandboxInfo holds sandbox details returned after activation
 type SandboxInfo struct {
-	ID        string            `json:"id"`
-	Status    string            `json:"status"`
-	Endpoints map[string]string `json:"endpoints,omitempty"`
-	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
+	ID        string             `json:"id"`
+	Status    string             `json:"status"`
+	Endpoints map[string]string  `json:"endpoints,omitempty"`
+	Services  []*ServiceInfo     `json:"services,omitempty"`
+	ExpiresAt *time.Time         `json:"expires_at,omitempty"`
+}
+
+// ServiceInfo holds service details for the join response
+type ServiceInfo struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Status string `json:"status"`
+	Port   int    `json:"port,omitempty"`
 }
 
 // ActivateSessionResponse is returned when activating a session

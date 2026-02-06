@@ -617,9 +617,14 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, s *models.Sessio
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	servicesJSON, err := json.Marshal(s.Services)
+	if err != nil {
+		return fmt.Errorf("failed to marshal services: %w", err)
+	}
+
 	query := `
-		INSERT INTO sessions (id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO sessions (id, token, template_id, status, status_message, env, metadata, services, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`
 
 	_, err = r.pool.Exec(ctx, query,
@@ -630,6 +635,7 @@ func (r *PostgresRepository) CreateSession(ctx context.Context, s *models.Sessio
 		nullString(s.StatusMessage),
 		envJSON,
 		metadataJSON,
+		servicesJSON,
 		s.TTLSeconds,
 		nullString(s.SandboxID),
 		s.TaskDescription,
@@ -658,7 +664,7 @@ func (r *PostgresRepository) GetSessionByID(ctx context.Context, id string) (*mo
 
 func (r *PostgresRepository) getSession(ctx context.Context, field, value string) (*models.Session, error) {
 	query := fmt.Sprintf(`
-		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
+		SELECT id, token, template_id, status, status_message, env, metadata, services, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
 		FROM sessions
 		WHERE %s = $1
 	`, field)
@@ -667,7 +673,7 @@ func (r *PostgresRepository) getSession(ctx context.Context, field, value string
 	var statusStr string
 	var statusMsg, sandboxID, createdBy sql.NullString
 	var activatedAt, expiresAt sql.NullTime
-	var envJSON, metadataJSON []byte
+	var envJSON, metadataJSON, servicesJSON []byte
 
 	err := r.pool.QueryRow(ctx, query, value).Scan(
 		&s.ID,
@@ -677,6 +683,7 @@ func (r *PostgresRepository) getSession(ctx context.Context, field, value string
 		&statusMsg,
 		&envJSON,
 		&metadataJSON,
+		&servicesJSON,
 		&s.TTLSeconds,
 		&sandboxID,
 		&s.TaskDescription,
@@ -714,6 +721,12 @@ func (r *PostgresRepository) getSession(ctx context.Context, field, value string
 	if metadataJSON != nil {
 		if err := json.Unmarshal(metadataJSON, &s.Metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+	}
+
+	if servicesJSON != nil {
+		if err := json.Unmarshal(servicesJSON, &s.Services); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal services: %w", err)
 		}
 	}
 
@@ -780,7 +793,7 @@ func (r *PostgresRepository) DeleteSession(ctx context.Context, id string) error
 // ListSessions returns sessions with optional status filter
 func (r *PostgresRepository) ListSessions(ctx context.Context, status string, limit, offset int) ([]*models.Session, error) {
 	query := `
-		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
+		SELECT id, token, template_id, status, status_message, env, metadata, services, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
 		FROM sessions
 		WHERE 1=1
 	`
@@ -819,7 +832,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, status string, li
 		var statusStr string
 		var statusMsg, sandboxID, createdBy sql.NullString
 		var activatedAt, expiresAt sql.NullTime
-		var envJSON, metadataJSON []byte
+		var envJSON, metadataJSON, servicesJSON []byte
 
 		err := rows.Scan(
 			&s.ID,
@@ -829,6 +842,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, status string, li
 			&statusMsg,
 			&envJSON,
 			&metadataJSON,
+			&servicesJSON,
 			&s.TTLSeconds,
 			&sandboxID,
 			&s.TaskDescription,
@@ -845,6 +859,10 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, status string, li
 		s.StatusMessage = statusMsg.String
 		s.SandboxID = sandboxID.String
 		s.CreatedBy = createdBy.String
+
+		if servicesJSON != nil {
+			_ = json.Unmarshal(servicesJSON, &s.Services)
+		}
 
 		if activatedAt.Valid {
 			s.ActivatedAt = &activatedAt.Time
@@ -869,7 +887,7 @@ func (r *PostgresRepository) ListSessions(ctx context.Context, status string, li
 // GetExpiredSessions returns active sessions that have expired
 func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.Session, error) {
 	query := `
-		SELECT id, token, template_id, status, status_message, env, metadata, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
+		SELECT id, token, template_id, status, status_message, env, metadata, services, ttl_seconds, sandbox_id, task_description, created_at, activated_at, expires_at, created_by
 		FROM sessions
 		WHERE status = 'active'
 		  AND expires_at < NOW()
@@ -889,7 +907,7 @@ func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.
 		var statusStr string
 		var statusMsg, sandboxID, createdBy sql.NullString
 		var activatedAt, expiresAt sql.NullTime
-		var envJSON, metadataJSON []byte
+		var envJSON, metadataJSON, servicesJSON []byte
 
 		err := rows.Scan(
 			&s.ID,
@@ -899,6 +917,7 @@ func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.
 			&statusMsg,
 			&envJSON,
 			&metadataJSON,
+			&servicesJSON,
 			&s.TTLSeconds,
 			&sandboxID,
 			&s.TaskDescription,
@@ -915,6 +934,10 @@ func (r *PostgresRepository) GetExpiredSessions(ctx context.Context) ([]*models.
 		s.StatusMessage = statusMsg.String
 		s.SandboxID = sandboxID.String
 		s.CreatedBy = createdBy.String
+
+		if servicesJSON != nil {
+			_ = json.Unmarshal(servicesJSON, &s.Services)
+		}
 
 		if activatedAt.Valid {
 			s.ActivatedAt = &activatedAt.Time
